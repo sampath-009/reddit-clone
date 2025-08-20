@@ -6,7 +6,7 @@ import { schemaTypes } from './schemas'
 export default defineConfig({
   name: 'default',
   title: 'Reddit Clone',
-  projectId: 'your-project-id',
+  projectId: '6lzp2w8g',
   dataset: 'production',
   basePath: '/studio',
   plugins: [deskTool(), visionTool()],

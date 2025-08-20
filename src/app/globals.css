@@ -120,3 +120,78 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Custom Cursor Styles */
+* {
+  cursor: none !important;
+}
+
+/* Ensure clickable elements still work */
+button, a, input, textarea, select, [role="button"], [tabindex] {
+  cursor: none !important;
+}
+
+/* Hide cursor on specific elements that might interfere */
+.custom-cursor-hidden {
+  cursor: none !important;
+}
+
+/* Custom Electric Cursor Animations */
+@keyframes electric-pulse {
+  0%, 100% {
+    opacity: 0.8;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+}
+
+@keyframes electric-spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes electric-spark {
+  0%, 100% {
+    opacity: 0.3;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+}
+
+@keyframes electric-glow {
+  0%, 100% {
+    opacity: 0.2;
+    filter: blur(2px);
+  }
+  50% {
+    opacity: 0.4;
+    filter: blur(4px);
+  }
+}
+
+/* Apply custom animations */
+.electric-pulse {
+  animation: electric-pulse 1.5s ease-in-out infinite;
+}
+
+.electric-spin {
+  animation: electric-spin 3s linear infinite;
+}
+
+.electric-spark {
+  animation: electric-spark 0.8s ease-in-out infinite;
+}
+
+.electric-glow {
+  animation: electric-glow 2s ease-in-out infinite;
+}

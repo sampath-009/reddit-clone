@@ -1,238 +1,356 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { User, Image, Link, FileText, ChevronDown } from 'lucide-react'
+import { Plus, Image as ImageIcon, Link as LinkIcon, Type, Hash } from 'lucide-react'
+import { useUser } from '@clerk/nextjs'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-// import { createPost } from '@/lib/actions'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { sanityClient } from '@/lib/sanity'
-// import { useUser } from '@clerk/nextjs'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { toast } from 'sonner'
 
 interface Subreddit {
   _id: string
   name: string
-  description: string
+  displayName: string
 }
 
-export default function CreatePost() {
-  const [postType, setPostType] = useState<'text' | 'image' | 'link'>('text')
-  const [content, setContent] = useState('')
+export default function CreatePost({ preSelectedCommunity }: CreatePostProps) {
+  const [isOpen, setIsOpen] = useState(false)
   const [title, setTitle] = useState('')
+  const [content, setContent] = useState('')
+  const [imageUrl, setImageUrl] = useState('')
+  const [linkUrl, setLinkUrl] = useState('')
+  const [postType, setPostType] = useState<'text' | 'image' | 'link'>('text')
   const [selectedSubreddit, setSelectedSubreddit] = useState('')
-  const [communities, setCommunities] = useState<Subreddit[]>([])
+  const [subreddits, setSubreddits] = useState<Subreddit[]>([])
   const [isLoading, setIsLoading] = useState(false)
-  const [showCommunitySelect, setShowCommunitySelect] = useState(false)
-  // const { isSignedIn, user } = useUser()
-  const isSignedIn = true // Temporary mock for testing
-  const user = { imageUrl: undefined } // Temporary mock
+  const { isSignedIn, user } = useUser()
 
   useEffect(() => {
-    const fetchCommunities = async () => {
-      try {
-        const query = `*[_type == "subreddit"] | order(name asc) {
-          _id,
-          name,
-          description
-        }`
-        const result = await sanityClient.fetch(query)
-        setCommunities(result)
-        if (result.length > 0) {
-          setSelectedSubreddit(result[0]._id)
-        }
-      } catch (error) {
-        console.error('Error fetching communities:', error)
-      }
+    if (isOpen) {
+      fetchSubreddits()
     }
+  }, [isOpen])
 
-    if (isSignedIn) {
-      fetchCommunities()
+  useEffect(() => {
+    if (preSelectedCommunity) {
+      setSelectedSubreddit(preSelectedCommunity)
     }
-  }, [isSignedIn])
+  }, [preSelectedCommunity])
+
+  const fetchSubreddits = async () => {
+    try {
+      const query = `*[_type == "subreddit"] | order(name asc) {
+        _id,
+        name,
+        displayName
+      }`
+      const result = await sanityClient.fetch(query)
+      setSubreddits(result || [])
+    } catch (error) {
+      console.error('Error fetching subreddits:', error)
+      toast.error('Failed to load communities')
+    }
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!title.trim() || !selectedSubreddit) return
+    
+    if (!isSignedIn || !user) {
+      toast.error('You must be signed in to create a post')
+      return
+    }
+
+    if (!title.trim()) {
+      toast.error('Post title is required')
+      return
+    }
+
+    if (!selectedSubreddit) {
+      toast.error('Please select a community')
+      return
+    }
+
+    // Validate content based on post type
+    if (postType === 'text' && !content.trim()) {
+      toast.error('Text content is required for text posts')
+      return
+    }
+
+    if (postType === 'image' && !imageUrl.trim()) {
+      toast.error('Image URL is required for image posts')
+      return
+    }
+
+    if (postType === 'link' && !linkUrl.trim()) {
+      toast.error('Link URL is required for link posts')
+      return
+    }
 
     setIsLoading(true)
+
     try {
-      // await createPost(
-      //   title.trim(),
-      //   content.trim(),
-      //   selectedSubreddit,
-      //   postType,
-      //   postType === 'image' ? content : undefined,
-      //   postType === 'link' ? content : undefined
-      // )
-      console.log('Post creation temporarily disabled - would create:', {
+      // First, get or create the user in Sanity
+      const existingUser = await sanityClient.fetch(
+        `*[_type == "user" && clerkId == $clerkId][0]`,
+        { clerkId: user.id }
+      )
+
+      let sanityUser
+      if (existingUser) {
+        sanityUser = existingUser
+      } else {
+        // Create new user in Sanity
+        sanityUser = await sanityClient.create({
+          _type: 'user',
+          clerkId: user.id,
+          username: user.username || `user_${user.id.slice(0, 8)}`,
+          email: user.emailAddresses[0]?.emailAddress || '',
+          imageUrl: user.imageUrl,
+          karma: 0,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        })
+      }
+
+      // Create the post
+      const post = await sanityClient.create({
+        _type: 'post',
         title: title.trim(),
-        content: content.trim(),
-        subredditId: selectedSubreddit,
+        content: postType === 'text' ? content.trim() : undefined,
+        imageUrl: postType === 'image' ? imageUrl.trim() : undefined,
+        linkUrl: postType === 'link' ? linkUrl.trim() : undefined,
         postType,
-        imageUrl: postType === 'image' ? content : undefined,
-        linkUrl: postType === 'link' ? content : undefined
+        author: {
+          _type: 'reference',
+          _ref: sanityUser._id,
+        },
+        subreddit: {
+          _type: 'reference',
+          _ref: selectedSubreddit,
+        },
+        upvotes: [],
+        downvotes: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       })
+
+      toast.success('Post created successfully!')
+      setIsOpen(false)
+      
+      // Reset form
       setTitle('')
       setContent('')
+      setImageUrl('')
+      setLinkUrl('')
       setPostType('text')
+      setSelectedSubreddit('')
+      
+      // Refresh the page to show the new post
+      window.location.reload()
+      
     } catch (error) {
       console.error('Error creating post:', error)
+      toast.error('Failed to create post. Please try again.')
     } finally {
       setIsLoading(false)
     }
   }
 
-  if (!isSignedIn) return null
+  const resetForm = () => {
+    setTitle('')
+    setContent('')
+    setImageUrl('')
+    setLinkUrl('')
+    setPostType('text')
+    setSelectedSubreddit('')
+  }
+
+  if (!isSignedIn) {
+    return (
+      <div className="bg-white rounded-lg border border-gray-200 p-4">
+        <div className="text-center">
+          <Plus className="h-8 w-8 mx-auto mb-2 text-gray-400" />
+          <p className="text-gray-500 text-sm">Sign in to create a post</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-6">
-      <div className="flex items-center space-x-3 mb-4">
-        <Avatar className="w-8 h-8">
-          <AvatarImage src={user?.imageUrl} />
-          <AvatarFallback>
-            <User className="h-4 w-4" />
-          </AvatarFallback>
-        </Avatar>
-        <div className="flex-1">
-          <Input
-            type="text"
-            placeholder="Create Post"
-            className="w-full"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-          />
-        </div>
-      </div>
-
-      {/* Post Type Selector */}
-      <div className="flex items-center space-x-2 mb-4">
-        <Button
-          type="button"
-          variant={postType === 'text' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => setPostType('text')}
-          className="flex items-center space-x-2"
-        >
-          <FileText className="h-4 w-4" />
-          <span>Text</span>
+    <Dialog open={isOpen} onOpenChange={setIsOpen}>
+      <DialogTrigger asChild>
+        <Button className="w-full bg-orange-500 hover:bg-orange-600 text-white">
+          <Plus className="h-4 w-4 mr-2" />
+          Create Post
         </Button>
-        <Button
-          type="button"
-          variant={postType === 'image' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => setPostType('image')}
-          className="flex items-center space-x-2"
-        >
-          <Image className="h-4 w-4" />
-          <span>Image</span>
-        </Button>
-        <Button
-          type="button"
-          variant={postType === 'link' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => setPostType('link')}
-          className="flex items-center space-x-2"
-        >
-          <Link className="h-4 w-4" />
-          <span>Link</span>
-        </Button>
-      </div>
-
-      {/* Post Content */}
-      <form onSubmit={handleSubmit} className="space-y-4">
-        {postType === 'text' && (
-          <Textarea
-            placeholder="What's on your mind?"
-            className="w-full resize-none"
-            rows={4}
-            value={content}
-            onChange={(e) => setContent(e.target.value)}
-          />
-        )}
-
-        {postType === 'image' && (
-          <div className="space-y-4">
-            <Textarea
-              placeholder="What's on your mind?"
-              className="w-full resize-none"
-              rows={3}
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
-            />
-            <div className="border-2 border-dashed border-gray-300 rounded-md p-6 text-center">
-              <Image className="h-12 w-12 text-gray-400 mx-auto mb-2" />
-              <p className="text-gray-600">Click to upload image</p>
-              <p className="text-sm text-gray-500">or drag and drop</p>
-            </div>
+      </DialogTrigger>
+      
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center space-x-2">
+            <Plus className="h-5 w-5 text-orange-500" />
+            <span>Create a Post</span>
+          </DialogTitle>
+        </DialogHeader>
+        
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Community Selection */}
+          <div>
+            <label htmlFor="subreddit" className="block text-sm font-medium text-gray-700 mb-1">
+              Community
+            </label>
+            <Select value={selectedSubreddit} onValueChange={setSelectedSubreddit}>
+              <SelectTrigger>
+                <SelectValue placeholder="Choose a community" />
+              </SelectTrigger>
+              <SelectContent>
+                {subreddits.map((subreddit) => (
+                  <SelectItem key={subreddit._id} value={subreddit._id}>
+                    <div className="flex items-center space-x-2">
+                      <Hash className="h-4 w-4 text-orange-500" />
+                      <span>r/{subreddit.displayName}</span>
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-        )}
 
-        {postType === 'link' && (
-          <div className="space-y-4">
-            <Textarea
-              placeholder="What's on your mind?"
-              className="w-full resize-none"
-              rows={3}
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
-            />
-            <Input
-              type="url"
-              placeholder="https://example.com"
-              className="w-full"
-            />
-          </div>
-        )}
-
-        {/* Community Selector */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <span className="text-sm text-gray-600">Post to:</span>
-            <div className="relative">
+          {/* Post Type Selection */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Post Type
+            </label>
+            <div className="flex space-x-2">
               <Button
                 type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setShowCommunitySelect(!showCommunitySelect)}
-                className="flex items-center space-x-1"
+                variant={postType === 'text' ? 'default' : 'outline'}
+                onClick={() => setPostType('text')}
+                className="flex-1"
               >
-                <span>
-                  {communities.find(c => c._id === selectedSubreddit)?.name || 'Select Community'}
-                </span>
-                <ChevronDown className="h-4 w-4" />
+                <Type className="h-4 w-4 mr-2" />
+                Text
               </Button>
-              
-              {showCommunitySelect && (
-                <div className="absolute top-full left-0 mt-1 w-64 bg-white border border-gray-200 rounded-md shadow-lg z-10 max-h-48 overflow-y-auto">
-                  {communities.map((community) => (
-                    <button
-                      key={community._id}
-                      type="button"
-                      onClick={() => {
-                        setSelectedSubreddit(community._id)
-                        setShowCommunitySelect(false)
-                      }}
-                      className="w-full text-left px-3 py-2 hover:bg-gray-50 border-b border-gray-100 last:border-b-0"
-                    >
-                      <div className="font-medium">r/{community.name}</div>
-                      <div className="text-sm text-gray-500">{community.description}</div>
-                    </button>
-                  ))}
-                </div>
-              )}
+              <Button
+                type="button"
+                variant={postType === 'image' ? 'default' : 'outline'}
+                onClick={() => setPostType('image')}
+                className="flex-1"
+              >
+                <ImageIcon className="h-4 w-4 mr-2" />
+                Image
+              </Button>
+              <Button
+                type="button"
+                variant={postType === 'link' ? 'default' : 'outline'}
+                onClick={() => setPostType('link')}
+                className="flex-1"
+              >
+                <LinkIcon className="h-4 w-4 mr-2" />
+                Link
+              </Button>
             </div>
           </div>
-          
-          <Button
-            type="submit"
-            disabled={!title.trim() || !selectedSubreddit || isLoading}
-            className="bg-orange-500 hover:bg-orange-600"
-          >
-            {isLoading ? 'Posting...' : 'Post'}
-          </Button>
-        </div>
-      </form>
-    </div>
+
+          {/* Title */}
+          <div>
+            <label htmlFor="title" className="block text-sm font-medium text-gray-700 mb-1">
+              Title
+            </label>
+            <Input
+              id="title"
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="What's on your mind?"
+              maxLength={300}
+              required
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              {title.length}/300 characters
+            </p>
+          </div>
+
+          {/* Content based on post type */}
+          {postType === 'text' && (
+            <div>
+              <label htmlFor="content" className="block text-sm font-medium text-gray-700 mb-1">
+                Content
+              </label>
+              <Textarea
+                id="content"
+                value={content}
+                onChange={(e) => setContent(e.target.value)}
+                placeholder="Share your thoughts..."
+                rows={4}
+                maxLength={40000}
+                required
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                {content.length}/40,000 characters
+              </p>
+            </div>
+          )}
+
+          {postType === 'image' && (
+            <div>
+              <label htmlFor="imageUrl" className="block text-sm font-medium text-gray-700 mb-1">
+                Image URL
+              </label>
+              <Input
+                id="imageUrl"
+                type="url"
+                value={imageUrl}
+                onChange={(e) => setImageUrl(e.target.value)}
+                placeholder="https://example.com/image.jpg"
+                required
+              />
+            </div>
+          )}
+
+          {postType === 'link' && (
+            <div>
+              <label htmlFor="linkUrl" className="block text-sm font-medium text-gray-700 mb-1">
+                Link URL
+              </label>
+              <Input
+                id="linkUrl"
+                type="url"
+                value={linkUrl}
+                onChange={(e) => setLinkUrl(e.target.value)}
+                placeholder="https://example.com"
+                required
+              />
+            </div>
+          )}
+
+          {/* Action Buttons */}
+          <div className="flex space-x-3">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setIsOpen(false)
+                resetForm()
+              }}
+              className="flex-1"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              disabled={isLoading || !title.trim() || !selectedSubreddit}
+              className="flex-1 bg-orange-500 hover:bg-orange-600"
+            >
+              {isLoading ? 'Creating...' : 'Create Post'}
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }

@@ -2,15 +2,17 @@
 
 import { useState } from 'react'
 import { Menu, Plus, Bell, User } from 'lucide-react'
-// import { UserButton, SignInButton, useUser } from '@clerk/nextjs'
+import { UserButton, SignInButton, useUser } from '@clerk/nextjs'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import Search from './Search'
+import Notifications from './Notifications'
+import Link from 'next/link'
+import { usePathname } from 'next/navigation'
 
 export default function Header() {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
-  // const { isSignedIn, user } = useUser()
-  const isSignedIn = false // Temporary mock
+  const { isSignedIn, user, isLoaded } = useUser()
 
   return (
     <header className="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-50">
@@ -26,15 +28,50 @@ export default function Header() {
             </div>
             
             <nav className="hidden md:flex items-center space-x-6">
-              <a href="#" className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
+              <Link 
+                href="/" 
+                className={cn(
+                  "px-3 py-2 rounded-md text-sm font-medium transition-colors",
+                  usePathname() === "/" 
+                    ? "text-orange-600 bg-orange-50" 
+                    : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+                )}
+              >
                 Home
-              </a>
-              <a href="#" className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
+              </Link>
+              <Link 
+                href="/popular" 
+                className={cn(
+                  "px-3 py-2 rounded-md text-sm font-medium transition-colors",
+                  usePathname() === "/popular" 
+                    ? "text-orange-600 bg-orange-50" 
+                    : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+                )}
+              >
                 Popular
-              </a>
-              <a href="#" className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
+              </Link>
+              <Link 
+                href="/all" 
+                className={cn(
+                  "px-3 py-2 rounded-md text-sm font-medium transition-colors",
+                  usePathname() === "/all" 
+                    ? "text-orange-600 bg-orange-50" 
+                    : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+                )}
+              >
                 All
-              </a>
+              </Link>
+              <Link 
+                href="/r/programming" 
+                className={cn(
+                  "px-3 py-2 rounded-md text-sm font-medium transition-colors",
+                  usePathname().startsWith("/r/programming")
+                    ? "text-orange-600 bg-orange-50" 
+                    : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+                )}
+              >
+                r/programming
+              </Link>
             </nav>
           </div>
 
@@ -43,22 +80,22 @@ export default function Header() {
 
           {/* User Actions */}
           <div className="flex items-center space-x-4">
-            {isSignedIn ? (
+            {!isLoaded ? (
+              <div className="w-8 h-8 bg-gray-200 rounded-full animate-pulse"></div>
+            ) : isSignedIn ? (
               <>
                 <button className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-full">
                   <Plus className="h-5 w-5" />
                 </button>
-                <button className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-full">
-                  <Bell className="h-5 w-5" />
-                </button>
-                <div className="w-8 h-8 bg-gray-300 rounded-full flex items-center justify-center">
-                  <User className="h-4 w-4 text-gray-600" />
-                </div>
+                <Notifications />
+                <UserButton />
               </>
             ) : (
-              <Button variant="outline" size="sm">
-                Sign In
-              </Button>
+              <SignInButton>
+                <Button variant="outline" size="sm">
+                  Sign In
+                </Button>
+              </SignInButton>
             )}
             
             {/* Mobile menu button */}
@@ -75,15 +112,42 @@ export default function Header() {
         {isMenuOpen && (
           <div className="md:hidden border-t border-gray-200 py-4">
             <nav className="flex flex-col space-y-2">
-              <a href="#" className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
+              <Link 
+                href="/" 
+                className={cn(
+                  "px-3 py-2 rounded-md text-sm font-medium transition-colors",
+                  usePathname() === "/" 
+                    ? "text-orange-600 bg-orange-50" 
+                    : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+                )}
+                onClick={() => setIsMenuOpen(false)}
+              >
                 Home
-              </a>
-              <a href="#" className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
+              </Link>
+              <Link 
+                href="/popular" 
+                className={cn(
+                  "px-3 py-2 rounded-md text-sm font-medium transition-colors",
+                  usePathname() === "/popular" 
+                    ? "text-orange-600 bg-orange-50" 
+                    : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+                )}
+                onClick={() => setIsMenuOpen(false)}
+              >
                 Popular
-              </a>
-              <a href="#" className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
+              </Link>
+              <Link 
+                href="/all" 
+                className={cn(
+                  "px-3 py-2 rounded-md text-sm font-medium transition-colors",
+                  usePathname() === "/all" 
+                    ? "text-orange-600 bg-orange-50" 
+                    : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+                )}
+                onClick={() => setIsMenuOpen(false)}
+              >
                 All
-              </a>
+              </Link>
             </nav>
           </div>
         )}

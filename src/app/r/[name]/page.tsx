@@ -1,93 +1,150 @@
-import { sanityClient } from '@/lib/sanity'
-import { notFound } from 'next/navigation'
-import PostFeed from '@/components/PostFeed'
-import CreatePost from '@/components/CreatePost'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { Users, Calendar } from 'lucide-react'
+'use client'
 
-interface PageProps {
-  params: {
-    name: string
+import { useState, useEffect } from 'react'
+import { useParams } from 'next/navigation'
+import { Hash, Users, Calendar, TrendingUp } from 'lucide-react'
+import { sanityClient } from '@/lib/sanity'
+import { formatTimeAgo, formatNumber } from '@/lib/utils'
+import Header from '@/components/Header'
+import Sidebar from '@/components/Sidebar'
+import CreatePost from '@/components/CreatePost'
+import PostFeed from '@/components/PostFeed'
+
+interface Community {
+  _id: string
+  name: string
+  displayName: string
+  description: string
+  members: any[]
+  createdAt: string
+  creator: {
+    username: string
   }
 }
 
-export default async function CommunityPage({ params }: PageProps) {
-  const { name } = params
+export default function CommunityPage() {
+  const params = useParams()
+  const communityName = params.name as string
+  const [community, setCommunity] = useState<Community | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
 
-  // Fetch community data
-  const communityQuery = `*[_type == "subreddit" && name == $name][0] {
-    _id,
-    name,
-    description,
-    imageUrl,
-    createdAt,
-    "memberCount": count(members),
-    creator->{
-      username
+  useEffect(() => {
+    fetchCommunity()
+  }, [communityName])
+
+  const fetchCommunity = async () => {
+    try {
+      const query = `*[_type == "subreddit" && name == $name][0] {
+        _id,
+        name,
+        displayName,
+        description,
+        members,
+        createdAt,
+        creator->{
+          username
+        }
+      }`
+      
+      const result = await sanityClient.fetch(query, { name: communityName })
+      
+      if (result) {
+        setCommunity(result)
+      } else {
+        // Community not found
+        setCommunity(null)
+      }
+    } catch (error) {
+      console.error('Error fetching community:', error)
+      setCommunity(null)
+    } finally {
+      setIsLoading(false)
     }
-  }`
-  
-  const community = await sanityClient.fetch(communityQuery, { name })
-
-  if (!community) {
-    notFound()
   }
 
-  return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Community Header */}
-      <div className="bg-white border-b border-gray-200">
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <Header />
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="flex items-center space-x-4">
-            <Avatar className="w-16 h-16">
-              <AvatarImage src={community.imageUrl} />
-              <AvatarFallback className="text-2xl font-bold bg-orange-500 text-white">
-                r/{community.name.charAt(0).toUpperCase()}
-              </AvatarFallback>
-            </Avatar>
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">r/{community.name}</h1>
-              <p className="text-gray-600">{community.description}</p>
-              <div className="flex items-center space-x-4 mt-2 text-sm text-gray-500">
-                <div className="flex items-center space-x-1">
-                  <Users className="h-4 w-4" />
-                  <span>{community.memberCount} members</span>
-                </div>
-                <div className="flex items-center space-x-1">
-                  <Calendar className="h-4 w-4" />
-                  <span>Created by u/{community.creator.username}</span>
-                </div>
-              </div>
+          <div className="animate-pulse">
+            <div className="bg-white rounded-lg p-6 mb-6">
+              <div className="h-8 bg-gray-300 rounded w-1/3 mb-4"></div>
+              <div className="h-4 bg-gray-300 rounded w-2/3"></div>
             </div>
           </div>
         </div>
       </div>
+    )
+  }
 
-      {/* Main Content */}
+  if (!community) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <Header />
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+          <div className="bg-white rounded-lg p-12 text-center">
+            <Hash className="h-16 w-16 mx-auto mb-4 text-gray-400" />
+            <h1 className="text-2xl font-bold text-gray-900 mb-2">Community Not Found</h1>
+            <p className="text-gray-500">The community "r/{communityName}" doesn't exist or has been deleted.</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <Header />
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* Main Content */}
           <div className="lg:col-span-8 space-y-6">
-            <CreatePost />
-            <PostFeed />
+            {/* Community Header */}
+            <div className="bg-white rounded-lg border border-gray-200 p-6">
+              <div className="flex items-start space-x-4">
+                <div className="w-16 h-16 bg-orange-500 rounded-full flex items-center justify-center">
+                  <Hash className="h-8 w-8 text-white" />
+                </div>
+                
+                <div className="flex-1">
+                  <div className="flex items-center space-x-3 mb-2">
+                    <h1 className="text-2xl font-bold text-gray-900">r/{community.displayName}</h1>
+                    <span className="px-2 py-1 bg-orange-100 text-orange-800 text-xs font-medium rounded-full">
+                      Community
+                    </span>
+                  </div>
+                  
+                  <p className="text-gray-700 mb-3">{community.description}</p>
+                  
+                  <div className="flex items-center space-x-6 text-sm text-gray-500">
+                    <div className="flex items-center space-x-1">
+                      <Users className="h-4 w-4" />
+                      <span>{formatNumber(community.members?.length || 0)} members</span>
+                    </div>
+                    <div className="flex items-center space-x-1">
+                      <Calendar className="h-4 w-4" />
+                      <span>Created {formatTimeAgo(new Date(community.createdAt))}</span>
+                    </div>
+                    <div className="flex items-center space-x-1">
+                      <TrendingUp className="h-4 w-4" />
+                      <span>by u/{community.creator?.username}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Create Post */}
+            <CreatePost preSelectedCommunity={community._id} />
+
+            {/* Posts Feed */}
+            <PostFeed sortBy="home" communityFilter={community._id} />
           </div>
           
           {/* Sidebar */}
           <div className="lg:col-span-4">
-            <div className="bg-white rounded-lg border border-gray-200 p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">About Community</h3>
-              <p className="text-gray-600 text-sm mb-4">{community.description}</p>
-              <div className="space-y-2 text-sm text-gray-500">
-                <div className="flex justify-between">
-                  <span>Created</span>
-                  <span>{new Date(community.createdAt).toLocaleDateString()}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Members</span>
-                  <span>{community.memberCount}</span>
-                </div>
-              </div>
-            </div>
+            <Sidebar />
           </div>
         </div>
       </div>

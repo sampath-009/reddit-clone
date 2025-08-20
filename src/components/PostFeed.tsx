@@ -4,10 +4,12 @@ import { useState, useEffect } from 'react'
 import { ArrowUp, ArrowDown, MessageCircle, Share, MoreHorizontal, Clock } from 'lucide-react'
 import { formatTimeAgo, formatNumber } from '@/lib/utils'
 import { sanityClient } from '@/lib/sanity'
-// import { vote } from '@/lib/actions'
-// import { useUser } from '@clerk/nextjs'
+import { vote, getVoteStatus } from '@/lib/actions'
+import { useUser } from '@clerk/nextjs'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
+import { getMockPosts } from '@/lib/mockData'
+import Comments from './Comments'
 
 interface Post {
   _id: string
@@ -29,18 +31,34 @@ interface Post {
   commentCount: number
   createdAt: string
   postType: 'text' | 'image' | 'link'
+  userVote?: number // 1 for upvote, -1 for downvote, 0 for no vote
 }
 
-export default function PostFeed() {
+interface PostFeedProps {
+  sortBy?: 'home' | 'popular' | 'all'
+  communityFilter?: string
+}
+
+export default function PostFeed({ sortBy = 'home', communityFilter }: PostFeedProps) {
   const [posts, setPosts] = useState<Post[]>([])
   const [isLoading, setIsLoading] = useState(true)
-  // const { isSignedIn, user } = useUser()
-  const isSignedIn = false // Temporary mock
+  const [showComments, setShowComments] = useState<string | null>(null)
+  const { isSignedIn, user } = useUser()
 
   useEffect(() => {
     const fetchPosts = async () => {
       try {
-        const query = `*[_type == "post"] | order(createdAt desc) {
+        // For now, use simple sorting that works with Sanity
+        let sortField = 'createdAt'
+        let sortDirection = 'desc'
+        
+        if (sortBy === 'popular') {
+          // Sort by comment count for popularity (simplified)
+          sortField = 'commentCount'
+          sortDirection = 'desc'
+        }
+
+        const query = `*[_type == "post"${communityFilter ? ' && subreddit._ref == $communityId' : ''}] | order(${sortField} ${sortDirection}) {
           _id,
           title,
           content,
@@ -54,63 +72,122 @@ export default function PostFeed() {
           },
           subreddit->{
             _id,
-            name
+            name,
+            displayName
           },
           upvotes,
           downvotes,
           "commentCount": count(*[_type == "comment" && post._ref == ^._id]),
           createdAt
         }`
-        const result = await sanityClient.fetch(query)
-        setPosts(result)
+        const result = await sanityClient.fetch(query, communityFilter ? { communityId: communityFilter } : {})
+        console.log('Sanity query result:', result)
+        
+        if (result && result.length > 0) {
+          // Fetch user's vote status for each post if signed in
+          if (isSignedIn && user) {
+            const postsWithVotes = await Promise.all(
+              result.map(async (post: Post) => {
+                try {
+                  const voteStatus = await getVoteStatus(post._id, undefined, user.id)
+                  return { ...post, userVote: voteStatus }
+                } catch (error) {
+                  console.error('Error fetching vote status:', error)
+                  return { ...post, userVote: 0 }
+                }
+              })
+            )
+            setPosts(postsWithVotes)
+          } else {
+            setPosts(result)
+          }
+        } else {
+          console.log('No posts from Sanity, using mock data')
+          // Fall back to mock data if no posts from Sanity
+          setPosts(getMockPosts(sortBy))
+        }
       } catch (error) {
         console.error('Error fetching posts:', error)
+        console.error('Error details:', {
+          message: error.message,
+          stack: error.stack,
+          sanityConfig: {
+            projectId: process.env.NEXT_PUBLIC_SANITY_PROJECT_ID,
+            dataset: process.env.NEXT_PUBLIC_SANITY_DATASET,
+            hasToken: !!process.env.SANITY_API_TOKEN
+          }
+        })
+        // Fall back to mock data on error
+        setPosts(getMockPosts(sortBy))
       } finally {
         setIsLoading(false)
       }
     }
 
+    // Test Sanity connection first
+    const testSanity = async () => {
+      try {
+        console.log('Testing Sanity connection...')
+        const testQuery = `*[_type == "post"][0...1]`
+        const testResult = await sanityClient.fetch(testQuery)
+        console.log('Sanity test result:', testResult)
+        
+        if (testResult && testResult.length > 0) {
+          console.log('Sanity is working, posts found:', testResult.length)
+        } else {
+          console.log('Sanity is working but no posts found')
+        }
+      } catch (error) {
+        console.error('Sanity connection test failed:', error)
+      }
+    }
+    
+    testSanity()
     fetchPosts()
-  }, [])
+  }, [sortBy, isSignedIn, user])
 
   const handleVote = async (postId: string, voteType: 'upvote' | 'downvote') => {
-    if (!isSignedIn) return
+    if (!isSignedIn || !user) return
 
     try {
-      // await vote(postId, undefined, voteType)
-      console.log(`Voting ${voteType} on post ${postId} - temporarily disabled`)
-      // Refresh posts to get updated vote counts
-      const query = `*[_type == "post"] | order(createdAt desc) {
-        _id,
-        title,
-        content,
-        imageUrl,
-        linkUrl,
-        postType,
-        author->{
-          _id,
-          username,
-          imageUrl
-        },
-        subreddit->{
-          _id,
-          name
-        },
-        upvotes,
-        downvotes,
-        "commentCount": count(*[_type == "comment" && post._ref == ^._id]),
-        createdAt
-      }`
-      const result = await sanityClient.fetch(query)
-      setPosts(result)
+      const result = await vote(postId, undefined, voteType)
+      
+      if (result.success) {
+        // Update the post's vote count optimistically
+        setPosts(prevPosts => 
+          prevPosts.map(post => {
+            if (post._id === postId) {
+              const currentVote = post.userVote || 0
+              let newVote = 0
+              
+              if (result.action === 'removed') {
+                // Vote was removed
+                if (voteType === 'upvote') {
+                  newVote = currentVote === 1 ? 0 : currentVote
+                } else {
+                  newVote = currentVote === -1 ? 0 : currentVote
+                }
+              } else if (result.action === 'updated') {
+                // Vote was changed
+                newVote = voteType === 'upvote' ? 1 : -1
+              } else {
+                // New vote was created
+                newVote = voteType === 'upvote' ? 1 : -1
+              }
+              
+              return { ...post, userVote: newVote }
+            }
+            return post
+          })
+        )
+      }
     } catch (error) {
       console.error('Error voting:', error)
     }
   }
 
   const handleComment = (postId: string) => {
-    // TODO: Implement comment functionality
-    console.log(`Opening comments for post ${postId}`)
+    setShowComments(showComments === postId ? null : postId)
   }
 
   const handleShare = (postId: string) => {
@@ -145,30 +222,73 @@ export default function PostFeed() {
       <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
         <h3 className="text-lg font-medium text-gray-900 mb-2">No posts yet</h3>
         <p className="text-gray-500">Be the first to create a post!</p>
+        <div className="mt-4 p-4 bg-gray-100 rounded text-left text-sm">
+          <p><strong>Debug Info:</strong></p>
+          <p>Posts loaded: {posts.length}</p>
+          <p>Loading state: {isLoading ? 'Yes' : 'No'}</p>
+          <p>User signed in: {isSignedIn ? 'Yes' : 'No'}</p>
+        </div>
       </div>
     )
   }
 
   return (
     <div className="space-y-4">
+      {/* Debug Info */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <p className="text-sm text-blue-800">
+          <strong>Debug:</strong> {posts.length} posts loaded. 
+          {posts.length > 0 && posts[0]._id.startsWith('1') ? ' Using mock data.' : ' Using Sanity data.'}
+        </p>
+      </div>
+      
+      {/* Sorting Header */}
+      <div className="bg-white rounded-lg border border-gray-200 p-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            {sortBy === 'popular' && (
+              <>
+                <span className="text-2xl">🔥</span>
+                <span className="font-medium text-gray-900">Popular Posts</span>
+              </>
+            )}
+            {sortBy === 'all' && (
+              <>
+                <span className="text-2xl">🌐</span>
+                <span className="font-medium text-gray-900">All Posts</span>
+              </>
+            )}
+            {sortBy === 'home' && (
+              <>
+                <span className="text-2xl">🏠</span>
+                <span className="font-medium text-gray-900">Latest Posts</span>
+              </>
+            )}
+          </div>
+                      <div className="text-sm text-gray-500">
+              {posts.length} post{posts.length !== 1 ? 's' : ''}
+            </div>
+        </div>
+      </div>
+      
       {posts.map((post) => (
         <div key={post._id} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
           {/* Post Header */}
-          <div className="p-4 border-b border-gray-100">
-            <div className="flex items-center space-x-2 text-sm text-gray-500 mb-2">
-              <span className="font-medium text-gray-900">r/{post.subreddit.name}</span>
-              <span>•</span>
-              <span>Posted by u/{post.author.username}</span>
-              <span>•</span>
-              <div className="flex items-center space-x-1">
-                <Clock className="h-3 w-3" />
-                <span>{formatTimeAgo(new Date(post.createdAt))}</span>
+                      <div className="p-4 border-b border-gray-100">
+                          <div className="flex items-center space-x-2 text-sm text-gray-500 mb-2">
+                <span className="font-medium text-gray-900">r/{post.subreddit.displayName || post.subreddit.name}</span>
+                <span>•</span>
+                <span>Posted by u/{post.author.username}</span>
+                <span>•</span>
+                <div className="flex items-center space-x-1">
+                  <Clock className="h-3 w-3" />
+                  <span>{formatTimeAgo(new Date(post.createdAt))}</span>
+                </div>
               </div>
-            </div>
-            <h2 className="text-lg font-semibold text-gray-900 mb-2">{post.title}</h2>
-            {post.content && (
-              <p className="text-gray-700 text-sm leading-relaxed">{post.content}</p>
-            )}
+              <h2 className="text-lg font-semibold text-gray-900 mb-2">{post.title}</h2>
+              {post.content && (
+                <p className="text-gray-700 text-sm leading-relaxed">{post.content}</p>
+              )}
             {post.imageUrl && (
               <img 
                 src={post.imageUrl} 
@@ -200,10 +320,12 @@ export default function PostFeed() {
                     variant="ghost"
                     size="sm"
                     onClick={() => handleVote(post._id, 'upvote')}
-                    className="p-1 hover:bg-gray-200"
+                    className={`p-1 hover:bg-gray-200 ${
+                      post.userVote === 1 ? 'text-orange-500 bg-orange-50' : 'text-gray-600'
+                    }`}
                     disabled={!isSignedIn}
                   >
-                    <ArrowUp className="h-5 w-5 text-gray-600 hover:text-orange-500" />
+                    <ArrowUp className="h-5 w-5" />
                   </Button>
                   <span className="text-sm font-medium text-gray-900 min-w-[2rem] text-center">
                     {formatNumber((post.upvotes?.length || 0) - (post.downvotes?.length || 0))}
@@ -212,10 +334,12 @@ export default function PostFeed() {
                     variant="ghost"
                     size="sm"
                     onClick={() => handleVote(post._id, 'downvote')}
-                    className="p-1 hover:bg-gray-200"
+                    className={`p-1 hover:bg-gray-200 ${
+                      post.userVote === -1 ? 'text-blue-500 bg-blue-50' : 'text-gray-600'
+                    }`}
                     disabled={!isSignedIn}
                   >
-                    <ArrowDown className="h-5 w-5 text-gray-600 hover:text-blue-500" />
+                    <ArrowDown className="h-5 w-5" />
                   </Button>
                 </div>
 
@@ -224,7 +348,9 @@ export default function PostFeed() {
                   variant="ghost"
                   size="sm"
                   onClick={() => handleComment(post._id)}
-                  className="flex items-center space-x-1 text-gray-600 hover:text-gray-900"
+                  className={`flex items-center space-x-1 ${
+                    showComments === post._id ? 'text-blue-600 bg-blue-50' : 'text-gray-600 hover:text-gray-900'
+                  }`}
                 >
                   <MessageCircle className="h-4 w-4" />
                   <span className="text-sm">{formatNumber(post.commentCount)}</span>
@@ -248,6 +374,13 @@ export default function PostFeed() {
               </Button>
             </div>
           </div>
+
+          {/* Comments Section */}
+          {showComments === post._id && (
+            <div className="border-t border-gray-200">
+              <Comments postId={post._id} onClose={() => setShowComments(null)} />
+            </div>
+          )}
         </div>
       ))}
     </div>
