@@ -1,9 +1,15 @@
+'use client'
+
+import { useSearchParams } from 'next/navigation'
 import Header from '@/components/Header'
 import Sidebar from '@/components/Sidebar'
 import PostFeed from '@/components/PostFeed'
 import CreatePost from '@/components/CreatePost'
 
 export default function Home() {
+  const searchParams = useSearchParams()
+  const feedType = searchParams.get('feed') === 'following' ? 'following' : 'all'
+
   return (
     <div className="min-h-screen bg-gray-50">
       <Header />
@@ -12,7 +18,7 @@ export default function Home() {
           {/* Main Content */}
           <div className="lg:col-span-8 space-y-6">
             <CreatePost />
-            <PostFeed sortBy="home" />
+            <PostFeed sortBy="home" initialFeedType={feedType} />
           </div>
           
           {/* Sidebar */}

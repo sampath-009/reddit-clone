@@ -9,14 +9,20 @@ import { Button } from '@/components/ui/button'
 import { formatTimeAgo, formatNumber } from '@/lib/utils'
 import Header from '@/components/Header'
 import Sidebar from '@/components/Sidebar'
+import UserProfile from '@/components/UserProfile'
+import FollowButton from '@/components/FollowButton'
+import { checkFollowStatus } from '@/lib/actions'
 
-interface UserProfile {
+interface UserProfileData {
   _id: string
   username: string
   imageUrl?: string
   karma: number
   createdAt: string
   bio?: string
+  followersCount: number
+  followingCount: number
+  postsCount: number
 }
 
 interface UserPost {
@@ -52,11 +58,12 @@ interface UserComment {
 export default function UserProfilePage() {
   const params = useParams()
   const username = params.username as string
-  const [profile, setProfile] = useState<UserProfile | null>(null)
+  const [profile, setProfile] = useState<UserProfileData | null>(null)
   const [posts, setPosts] = useState<UserPost[]>([])
   const [comments, setComments] = useState<UserComment[]>([])
   const [activeTab, setActiveTab] = useState<'posts' | 'comments'>('posts')
   const [isLoading, setIsLoading] = useState(true)
+  const [followStatus, setFollowStatus] = useState<any>({ isFollowing: false, isOwnProfile: false })
 
   useEffect(() => {
     fetchUserData()
@@ -64,26 +71,32 @@ export default function UserProfilePage() {
 
   const fetchUserData = async () => {
     try {
-      // Fetch user profile
+      // Fetch user profile with enhanced data
       const profileQuery = `*[_type == "user" && username == $username][0] {
         _id,
         username,
         imageUrl,
         karma,
         createdAt,
-        bio
+        bio,
+        "followersCount": count(followers),
+        "followingCount": count(following),
+        "postsCount": count(*[_type == "post" && author._ref == ^._id])
       }`
       
       const userProfile = await sanityClient.fetch(profileQuery, { username })
       
       if (!userProfile) {
-        // User not found
         setProfile(null)
         setIsLoading(false)
         return
       }
 
       setProfile(userProfile)
+
+      // Get follow status for current user
+      const followInfo = await checkFollowStatus(userProfile._id)
+      setFollowStatus(followInfo)
 
       // Fetch user posts
       const postsQuery = `*[_type == "post" && author->username == $username] | order(createdAt desc) {
@@ -171,33 +184,59 @@ export default function UserProfilePage() {
           <div className="lg:col-span-8 space-y-6">
             {/* User Profile Card */}
             <div className="bg-white rounded-lg border border-gray-200 p-6">
-              <div className="flex items-start space-x-6">
-                <Avatar className="w-20 h-20">
-                  <AvatarImage src={profile.imageUrl} />
-                  <AvatarFallback className="text-2xl font-bold">
-                    {profile.username[0].toUpperCase()}
-                  </AvatarFallback>
-                </Avatar>
+              <div className="flex items-start justify-between">
+                <div className="flex items-center space-x-6">
+                  <Avatar className="w-20 h-20">
+                    <AvatarImage src={profile.imageUrl} />
+                    <AvatarFallback className="text-2xl font-bold">
+                      {profile.username[0].toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                  
+                  <div className="flex-1">
+                    <div className="flex items-center space-x-3 mb-2">
+                      <h1 className="text-2xl font-bold text-gray-900">u/{profile.username}</h1>
+                      <div className="flex items-center space-x-1 text-orange-500">
+                        <Award className="h-5 w-5" />
+                        <span className="text-sm font-medium">{formatNumber(profile.karma)} karma</span>
+                      </div>
+                    </div>
+                    
+                    <div className="flex items-center space-x-4 text-sm text-gray-500 mb-3">
+                      <div className="flex items-center space-x-1">
+                        <Calendar className="h-4 w-4" />
+                        <span>Joined {formatTimeAgo(new Date(profile.createdAt))}</span>
+                      </div>
+                    </div>
+                    
+                    {profile.bio && (
+                      <p className="text-gray-700">{profile.bio}</p>
+                    )}
+                  </div>
+                </div>
                 
-                <div className="flex-1">
-                  <div className="flex items-center space-x-3 mb-2">
-                    <h1 className="text-2xl font-bold text-gray-900">u/{profile.username}</h1>
-                    <div className="flex items-center space-x-1 text-orange-500">
-                      <Award className="h-5 w-5" />
-                      <span className="text-sm font-medium">{formatNumber(profile.karma)} karma</span>
-                    </div>
-                  </div>
-                  
-                  <div className="flex items-center space-x-4 text-sm text-gray-500 mb-3">
-                    <div className="flex items-center space-x-1">
-                      <Calendar className="h-4 w-4" />
-                      <span>Joined {formatTimeAgo(new Date(profile.createdAt))}</span>
-                    </div>
-                  </div>
-                  
-                  {profile.bio && (
-                    <p className="text-gray-700">{profile.bio}</p>
-                  )}
+                {/* Follow Button */}
+                <FollowButton
+                  targetUserId={profile._id}
+                  isFollowing={followStatus.isFollowing}
+                  isOwnProfile={followStatus.isOwnProfile}
+                  className="px-6 py-2"
+                />
+              </div>
+
+              {/* Stats */}
+              <div className="grid grid-cols-3 gap-6 py-4 border-t border-gray-200 mt-6">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-gray-900">{profile.followersCount}</div>
+                  <div className="text-sm text-gray-500">Followers</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-gray-900">{profile.followingCount}</div>
+                  <div className="text-sm text-gray-500">Following</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-gray-900">{profile.postsCount}</div>
+                  <div className="text-sm text-gray-500">Posts</div>
                 </div>
               </div>
             </div>

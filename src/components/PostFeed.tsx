@@ -1,10 +1,10 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { ArrowUp, ArrowDown, MessageCircle, Share, MoreHorizontal, Clock } from 'lucide-react'
+import { ArrowUp, ArrowDown, MessageCircle, Share, MoreHorizontal, Clock, Users, Globe } from 'lucide-react'
 import { formatTimeAgo, formatNumber } from '@/lib/utils'
 import { sanityClient } from '@/lib/sanity'
-import { vote, getVoteStatus } from '@/lib/actions'
+import { vote, getVoteStatus, getFollowedUsersPosts } from '@/lib/actions'
 import { useUser } from '@clerk/nextjs'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
@@ -37,52 +37,39 @@ interface Post {
 interface PostFeedProps {
   sortBy?: 'home' | 'popular' | 'all'
   communityFilter?: string
+  initialFeedType?: 'following' | 'all'
 }
 
-export default function PostFeed({ sortBy = 'home', communityFilter }: PostFeedProps) {
+export default function PostFeed({ sortBy = 'home', communityFilter, initialFeedType = 'following' }: PostFeedProps) {
   const [posts, setPosts] = useState<Post[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [showComments, setShowComments] = useState<string | null>(null)
+  const [feedType, setFeedType] = useState<'following' | 'all'>(initialFeedType)
   const { isSignedIn, user } = useUser()
+
+  useEffect(() => {
+    setFeedType(initialFeedType)
+  }, [initialFeedType])
 
   useEffect(() => {
     const fetchPosts = async () => {
       try {
-        // For now, use simple sorting that works with Sanity
-        let sortField = 'createdAt'
-        let sortDirection = 'desc'
-        
-        if (sortBy === 'popular') {
-          // Sort by comment count for popularity (simplified)
-          sortField = 'commentCount'
-          sortDirection = 'desc'
+        let result: Post[] = []
+
+        if (sortBy === 'home' && isSignedIn && feedType === 'following') {
+          // Get posts from followed users
+          result = await getFollowedUsersPosts()
+          
+          if (result.length === 0) {
+            // If no posts from followed users, show all posts with a message
+            console.log('No posts from followed users, showing all posts')
+            result = await fetchAllPosts()
+          }
+        } else {
+          // Fetch all posts with sorting
+          result = await fetchAllPosts()
         }
 
-        const query = `*[_type == "post"${communityFilter ? ' && subreddit._ref == $communityId' : ''}] | order(${sortField} ${sortDirection}) {
-          _id,
-          title,
-          content,
-          imageUrl,
-          linkUrl,
-          postType,
-          author->{
-            _id,
-            username,
-            imageUrl
-          },
-          subreddit->{
-            _id,
-            name,
-            displayName
-          },
-          upvotes,
-          downvotes,
-          "commentCount": count(*[_type == "comment" && post._ref == ^._id]),
-          createdAt
-        }`
-        const result = await sanityClient.fetch(query, communityFilter ? { communityId: communityFilter } : {})
-        console.log('Sanity query result:', result)
-        
         if (result && result.length > 0) {
           // Fetch user's vote status for each post if signed in
           if (isSignedIn && user) {
@@ -109,8 +96,8 @@ export default function PostFeed({ sortBy = 'home', communityFilter }: PostFeedP
       } catch (error) {
         console.error('Error fetching posts:', error)
         console.error('Error details:', {
-          message: error.message,
-          stack: error.stack,
+          message: error instanceof Error ? error.message : 'Unknown error',
+          stack: error instanceof Error ? error.stack : undefined,
           sanityConfig: {
             projectId: process.env.NEXT_PUBLIC_SANITY_PROJECT_ID,
             dataset: process.env.NEXT_PUBLIC_SANITY_DATASET,
@@ -122,6 +109,42 @@ export default function PostFeed({ sortBy = 'home', communityFilter }: PostFeedP
       } finally {
         setIsLoading(false)
       }
+    }
+
+    const fetchAllPosts = async () => {
+      // For now, use simple sorting that works with Sanity
+      let sortField = 'createdAt'
+      let sortDirection = 'desc'
+      
+      if (sortBy === 'popular') {
+        // Sort by comment count for popularity (simplified)
+        sortField = 'commentCount'
+        sortDirection = 'desc'
+      }
+
+      const query = `*[_type == "post"${communityFilter ? ' && subreddit._ref == $communityId' : ''}] | order(${sortField} ${sortDirection}) {
+        _id,
+        title,
+        content,
+        imageUrl,
+        linkUrl,
+        postType,
+        author->{
+          _id,
+          username,
+          imageUrl
+        },
+        subreddit->{
+          _id,
+          name,
+          displayName
+        },
+        upvotes,
+        downvotes,
+        "commentCount": count(*[_type == "comment" && post._ref == ^._id]),
+        createdAt
+      }`
+      return await sanityClient.fetch(query, communityFilter ? { communityId: communityFilter } : {})
     }
 
     // Test Sanity connection first
@@ -144,7 +167,7 @@ export default function PostFeed({ sortBy = 'home', communityFilter }: PostFeedP
     
     testSanity()
     fetchPosts()
-  }, [sortBy, isSignedIn, user])
+  }, [sortBy, isSignedIn, user, feedType])
 
   const handleVote = async (postId: string, voteType: 'upvote' | 'downvote') => {
     if (!isSignedIn || !user) return
@@ -195,6 +218,10 @@ export default function PostFeed({ sortBy = 'home', communityFilter }: PostFeedP
     console.log(`Sharing post ${postId}`)
   }
 
+  const toggleFeedType = () => {
+    setFeedType(feedType === 'following' ? 'all' : 'following')
+  }
+
   if (isLoading) {
     return (
       <div className="space-y-4">
@@ -242,6 +269,37 @@ export default function PostFeed({ sortBy = 'home', communityFilter }: PostFeedP
         </p>
       </div>
       
+      {/* Feed Type Toggle (only show on home page) */}
+      {sortBy === 'home' && isSignedIn && (
+        <div className="bg-white rounded-lg border border-gray-200 p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <Button
+                variant={feedType === 'following' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setFeedType('following')}
+                className="flex items-center space-x-2"
+              >
+                <Users className="h-4 w-4" />
+                <span>Following</span>
+              </Button>
+              <Button
+                variant={feedType === 'all' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setFeedType('all')}
+                className="flex items-center space-x-2"
+              >
+                <Globe className="h-4 w-4" />
+                <span>All Posts</span>
+              </Button>
+            </div>
+            <div className="text-sm text-gray-500">
+              {feedType === 'following' ? 'Posts from people you follow' : 'All posts'}
+            </div>
+          </div>
+        </div>
+      )}
+      
       {/* Sorting Header */}
       <div className="bg-white rounded-lg border border-gray-200 p-4">
         <div className="flex items-center justify-between">
@@ -261,34 +319,36 @@ export default function PostFeed({ sortBy = 'home', communityFilter }: PostFeedP
             {sortBy === 'home' && (
               <>
                 <span className="text-2xl">🏠</span>
-                <span className="font-medium text-gray-900">Latest Posts</span>
+                <span className="font-medium text-gray-900">
+                  {feedType === 'following' ? 'Posts from Following' : 'Latest Posts'}
+                </span>
               </>
             )}
           </div>
-                      <div className="text-sm text-gray-500">
-              {posts.length} post{posts.length !== 1 ? 's' : ''}
-            </div>
+          <div className="text-sm text-gray-500">
+            {posts.length} post{posts.length !== 1 ? 's' : ''}
+          </div>
         </div>
       </div>
       
       {posts.map((post) => (
         <div key={post._id} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
           {/* Post Header */}
-                      <div className="p-4 border-b border-gray-100">
-                          <div className="flex items-center space-x-2 text-sm text-gray-500 mb-2">
-                <span className="font-medium text-gray-900">r/{post.subreddit.displayName || post.subreddit.name}</span>
-                <span>•</span>
-                <span>Posted by u/{post.author.username}</span>
-                <span>•</span>
-                <div className="flex items-center space-x-1">
-                  <Clock className="h-3 w-3" />
-                  <span>{formatTimeAgo(new Date(post.createdAt))}</span>
-                </div>
+          <div className="p-4 border-b border-gray-100">
+            <div className="flex items-center space-x-2 text-sm text-gray-500 mb-2">
+              <span className="font-medium text-gray-900">r/{post.subreddit.name}</span>
+              <span>•</span>
+              <span>Posted by u/{post.author.username}</span>
+              <span>•</span>
+              <div className="flex items-center space-x-1">
+                <Clock className="h-3 w-3" />
+                <span>{formatTimeAgo(new Date(post.createdAt))}</span>
               </div>
-              <h2 className="text-lg font-semibold text-gray-900 mb-2">{post.title}</h2>
-              {post.content && (
-                <p className="text-gray-700 text-sm leading-relaxed">{post.content}</p>
-              )}
+            </div>
+            <h2 className="text-lg font-semibold text-gray-900 mb-2">{post.title}</h2>
+            {post.content && (
+              <p className="text-gray-700 text-sm leading-relaxed">{post.content}</p>
+            )}
             {post.imageUrl && (
               <img 
                 src={post.imageUrl} 

@@ -48,6 +48,7 @@ model User {
   image         String?
   username      String    @unique
   karma         Int       @default(0)
+  bio           String?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -57,6 +58,10 @@ model User {
   comments Comment[]
   votes    Vote[]
   subreddits Subreddit[]
+  
+  // Following/Followers relationships
+  following   User[] @relation("UserFollows")
+  followers   User[] @relation("UserFollows")
 }
 
 model VerificationToken {

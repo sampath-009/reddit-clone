@@ -352,3 +352,182 @@ export async function reportContent(
     throw error
   }
 }
+
+export async function followUser(userIdToFollow: string) {
+  try {
+    const user = await getOrCreateUser()
+    if (!user) throw new Error('User not found')
+    
+    if (user._id === userIdToFollow) {
+      throw new Error('Cannot follow yourself')
+    }
+
+    // Get current user's following list
+    const currentUser = await sanityClient.getDocument(user._id)
+    const following = currentUser.following || []
+    
+    // Check if already following
+    const isAlreadyFollowing = following.find((followedUser: any) => followedUser._ref === userIdToFollow)
+    if (isAlreadyFollowing) {
+      throw new Error('Already following this user')
+    }
+
+    // Add to following list
+    following.push({ _type: 'reference', _ref: userIdToFollow })
+    
+    // Update current user
+    await sanityClient.patch(user._id).set({
+      following,
+      updatedAt: new Date().toISOString()
+    }).commit()
+
+    // Update target user's followers list
+    const targetUser = await sanityClient.getDocument(userIdToFollow)
+    const followers = targetUser.followers || []
+    followers.push({ _type: 'reference', _ref: user._id })
+    
+    await sanityClient.patch(userIdToFollow).set({
+      followers,
+      updatedAt: new Date().toISOString()
+    }).commit()
+
+    revalidatePath('/')
+    revalidatePath(`/u/${currentUser.username}`)
+    revalidatePath(`/u/${targetUser.username}`)
+    
+    return { success: true }
+  } catch (error) {
+    console.error('Error following user:', error)
+    throw error
+  }
+}
+
+export async function unfollowUser(userIdToUnfollow: string) {
+  try {
+    const user = await getOrCreateUser()
+    if (!user) throw new Error('User not found')
+
+    // Get current user's following list
+    const currentUser = await sanityClient.getDocument(user._id)
+    const following = currentUser.following || []
+    
+    // Remove from following list
+    const updatedFollowing = following.filter((followedUser: any) => followedUser._ref !== userIdToUnfollow)
+    
+    // Update current user
+    await sanityClient.patch(user._id).set({
+      following: updatedFollowing,
+      updatedAt: new Date().toISOString()
+    }).commit()
+
+    // Update target user's followers list
+    const targetUser = await sanityClient.getDocument(userIdToUnfollow)
+    const followers = targetUser.followers || []
+    const updatedFollowers = followers.filter((follower: any) => follower._ref !== user._id)
+    
+    await sanityClient.patch(userIdToUnfollow).set({
+      followers: updatedFollowers,
+      updatedAt: new Date().toISOString()
+    }).commit()
+
+    revalidatePath('/')
+    revalidatePath(`/u/${currentUser.username}`)
+    revalidatePath(`/u/${targetUser.username}`)
+    
+    return { success: true }
+  } catch (error) {
+    console.error('Error unfollowing user:', error)
+    throw error
+  }
+}
+
+export async function getFollowedUsersPosts() {
+  try {
+    const user = await getOrCreateUser()
+    if (!user) throw new Error('User not found')
+
+    // Get current user's following list
+    const currentUser = await sanityClient.getDocument(user._id)
+    const following = currentUser.following || []
+    
+    if (following.length === 0) {
+      return []
+    }
+
+    // Get posts from followed users
+    const followedUserIds = following.map((followedUser: any) => followedUser._ref)
+    
+    const posts = await sanityClient.fetch(`
+      *[_type == "post" && author._ref in $followedUserIds] | order(createdAt desc) {
+        _id,
+        title,
+        content,
+        postType,
+        imageUrl,
+        linkUrl,
+        createdAt,
+        "author": {
+          _id: author._ref,
+          username: author->username,
+          imageUrl: author->imageUrl
+        },
+        "subreddit": {
+          _id: subreddit._ref,
+          name: subreddit->name
+        },
+        "upvotes": upvotes[]->._id,
+        "downvotes": downvotes[]->._id
+      }
+    `, { followedUserIds })
+
+    return posts
+  } catch (error) {
+    console.error('Error getting followed users posts:', error)
+    return []
+  }
+}
+
+export async function checkFollowStatus(targetUserId: string) {
+  try {
+    const user = await getOrCreateUser()
+    if (!user) return { isFollowing: false, isOwnProfile: false }
+
+    if (user._id === targetUserId) {
+      return { isFollowing: false, isOwnProfile: true }
+    }
+
+    const currentUser = await sanityClient.getDocument(user._id)
+    const following = currentUser.following || []
+    
+    const isFollowing = following.find((followedUser: any) => followedUser._ref === targetUserId)
+    
+    return { isFollowing: !!isFollowing, isOwnProfile: false }
+  } catch (error) {
+    console.error('Error checking follow status:', error)
+    return { isFollowing: false, isOwnProfile: false }
+  }
+}
+
+export async function getUserProfile(username: string) {
+  try {
+    const user = await sanityClient.fetch(`
+      *[_type == "user" && username == $username][0] {
+        _id,
+        username,
+        email,
+        imageUrl,
+        karma,
+        bio,
+        createdAt,
+        "followersCount": count(followers),
+        "followingCount": count(following),
+        "postsCount": count(*[_type == "post" && author._ref == ^._id])
+      }
+    `, { username })
+
+    return user
+  } catch (error) {
+    console.error('Error getting user profile:', error)
+    return null
+  }
+}

@@ -39,6 +39,19 @@ export default function Header() {
               >
                 Home
               </Link>
+              {isSignedIn && (
+                <Link 
+                  href="/?feed=following" 
+                  className={cn(
+                    "px-3 py-2 rounded-md text-sm font-medium transition-colors",
+                    usePathname() === "/" && typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('feed') === 'following'
+                      ? "text-orange-600 bg-orange-50" 
+                      : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+                  )}
+                >
+                  Following
+                </Link>
+              )}
               <Link 
                 href="/popular" 
                 className={cn(
@@ -124,6 +137,20 @@ export default function Header() {
               >
                 Home
               </Link>
+              {isSignedIn && (
+                <Link 
+                  href="/?feed=following" 
+                  className={cn(
+                    "px-3 py-2 rounded-md text-sm font-medium transition-colors",
+                    usePathname() === "/" && typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('feed') === 'following'
+                      ? "text-orange-600 bg-orange-50" 
+                      : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+                  )}
+                  onClick={() => setIsMenuOpen(false)}
+                >
+                  Following
+                </Link>
+              )}
               <Link 
                 href="/popular" 
                 className={cn(

@@ -33,6 +33,26 @@ export default {
       initialValue: 0,
     },
     {
+      name: 'following',
+      title: 'Following',
+      type: 'array',
+      of: [{ type: 'reference', to: [{ type: 'user' }] }],
+      description: 'Users this user is following',
+    },
+    {
+      name: 'followers',
+      title: 'Followers',
+      type: 'array',
+      of: [{ type: 'reference', to: [{ type: 'user' }] }],
+      description: 'Users following this user',
+    },
+    {
+      name: 'bio',
+      title: 'Bio',
+      type: 'text',
+      description: 'User bio/description',
+    },
+    {
       name: 'createdAt',
       title: 'Created At',
       type: 'datetime',
