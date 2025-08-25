@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
-import { sanityClient } from '@/lib/sanity'
+import { createCommunity } from '@/lib/actions'
 import { toast } from 'sonner'
 
 export default function CreateCommunity() {
@@ -49,72 +49,22 @@ export default function CreateCommunity() {
     setIsLoading(true)
 
     try {
-      // First, get or create the user in Sanity
-      const existingUser = await sanityClient.fetch(
-        `*[_type == "user" && clerkId == $clerkId][0]`,
-        { clerkId: user.id }
-      )
-
-      let sanityUser
-      if (existingUser) {
-        sanityUser = existingUser
+      // Use server action instead of direct Sanity calls
+      const result = await createCommunity(name, description)
+      
+      if (result.success) {
+        toast.success(`Community r/${name} created successfully!`)
+        setIsOpen(false)
+        setName('')
+        setDescription('')
+        // Optionally refresh the page or update the UI
+        window.location.reload()
       } else {
-        // Create new user in Sanity
-        sanityUser = await sanityClient.create({
-          _type: 'user',
-          clerkId: user.id,
-          username: user.username || `user_${user.id.slice(0, 8)}`,
-          email: user.emailAddresses[0]?.emailAddress || '',
-          imageUrl: user.imageUrl,
-          karma: 0,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        })
+        toast.error(result.error || 'Failed to create community')
       }
-
-      // Check if community name already exists
-      const existingCommunity = await sanityClient.fetch(
-        `*[_type == "subreddit" && name == $name][0]`,
-        { name: name.toLowerCase() }
-      )
-
-      if (existingCommunity) {
-        toast.error('A community with this name already exists')
-        return
-      }
-
-      // Create the community
-      const community = await sanityClient.create({
-        _type: 'subreddit',
-        name: name.toLowerCase(),
-        displayName: name,
-        description: description.trim() || 'A community for sharing and discussing topics.',
-        creator: {
-          _type: 'reference',
-          _ref: sanityUser._id,
-        },
-        members: [
-          {
-            _type: 'reference',
-            _ref: sanityUser._id,
-          }
-        ],
-        memberCount: 1,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      })
-
-      toast.success(`Community r/${name} created successfully!`)
-      setIsOpen(false)
-      setName('')
-      setDescription('')
-      
-      // Refresh the page to show the new community
-      window.location.reload()
-      
     } catch (error) {
       console.error('Error creating community:', error)
-      toast.error('Failed to create community. Please try again.')
+      toast.error('An unexpected error occurred.')
     } finally {
       setIsLoading(false)
     }
@@ -122,10 +72,10 @@ export default function CreateCommunity() {
 
   if (!isSignedIn) {
     return (
-      <div className="bg-white rounded-lg border border-gray-200 p-4">
+      <div className="bg-card rounded-lg border border-border p-4">
         <div className="text-center">
-          <Users className="h-8 w-8 mx-auto mb-2 text-gray-400" />
-          <p className="text-gray-500 text-sm">Sign in to create a community</p>
+          <Users className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+          <p className="text-muted-foreground text-sm">Sign in to create a community</p>
         </div>
       </div>
     )

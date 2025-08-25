@@ -1,6 +1,6 @@
 'use server'
 
-import { sanityClient } from './sanity'
+import { sanityWrite } from './sanity/write'
 import { getOrCreateUser } from './helpers'
 import { revalidatePath } from 'next/cache'
 import { auth } from '@clerk/nextjs/server'
@@ -8,7 +8,17 @@ import { auth } from '@clerk/nextjs/server'
 export async function createCommunity(name: string, description: string) {
   try {
     const user = await getOrCreateUser()
-    if (!user) throw new Error('User not found')
+    if (!user) return { success: false, error: 'User not found' }
+
+    // Check for duplicate community name
+    const existingCommunity = await sanityWrite.fetch(
+      `*[_type == "subreddit" && name == $name][0]`,
+      { name: name.toLowerCase() }
+    )
+    
+    if (existingCommunity) {
+      return { success: false, error: 'A community with this name already exists' }
+    }
 
     const communityDoc = {
       _type: 'subreddit',
@@ -28,12 +38,12 @@ export async function createCommunity(name: string, description: string) {
       updatedAt: new Date().toISOString(),
     }
 
-    const result = await sanityClient.create(communityDoc)
+    const result = await sanityWrite.create(communityDoc)
     revalidatePath('/')
-    return result
+    return { success: true, id: result._id }
   } catch (error) {
     console.error('Error creating community:', error)
-    throw error
+    return { success: false, error: String(error) }
   }
 }
 
@@ -47,7 +57,13 @@ export async function createPost(
 ) {
   try {
     const user = await getOrCreateUser()
-    if (!user) throw new Error('User not found')
+    if (!user) return { success: false, error: 'User not found' }
+
+    // Validate subreddit exists
+    const subreddit = await sanityWrite.getDocument(subredditId)
+    if (!subreddit) {
+      return { success: false, error: 'Invalid community ID' }
+    }
 
     const postDoc = {
       _type: 'post',
@@ -70,12 +86,12 @@ export async function createPost(
       updatedAt: new Date().toISOString(),
     }
 
-    const result = await sanityClient.create(postDoc)
+    const result = await sanityWrite.create(postDoc)
     revalidatePath('/')
-    return result
+    return { success: true, id: result._id }
   } catch (error) {
     console.error('Error creating post:', error)
-    throw error
+    return { success: false, error: String(error) }
   }
 }
 
@@ -111,7 +127,7 @@ export async function createComment(
       updatedAt: new Date().toISOString(),
     }
 
-    const result = await sanityClient.create(commentDoc)
+    const result = await sanityWrite.create(commentDoc)
     revalidatePath('/')
     return result
   } catch (error) {
@@ -121,24 +137,17 @@ export async function createComment(
 }
 
 export async function vote(
-  postId: string | undefined,
-  commentId: string | undefined,
-  voteType: 'upvote' | 'downvote'
+  voteType: 'upvote' | 'downvote',
+  postId?: string,
+  commentId?: string
 ) {
   try {
-    const { userId } = await auth()
-    if (!userId) {
-      throw new Error('Unauthorized')
-    }
-
     const user = await getOrCreateUser()
-    if (!user) {
-      throw new Error('User not found')
-    }
+    if (!user) throw new Error('User not found')
 
     if (postId) {
       // Handle post voting
-      const post = await sanityClient.getDocument(postId)
+      const post = await sanityWrite.getDocument(postId)
       if (!post) {
         throw new Error('Post not found')
       }
@@ -150,11 +159,9 @@ export async function vote(
 
       if (voteType === 'upvote') {
         if (userVoteIndex !== -1) {
-          // Remove upvote
           upvotes.splice(userVoteIndex, 1)
           return { success: true, action: 'removed' }
         } else {
-          // Add upvote, remove downvote if exists
           if (userDownvoteIndex !== -1) {
             downvotes.splice(userDownvoteIndex, 1)
           }
@@ -163,11 +170,9 @@ export async function vote(
         }
       } else {
         if (userDownvoteIndex !== -1) {
-          // Remove downvote
           downvotes.splice(userDownvoteIndex, 1)
           return { success: true, action: 'removed' }
         } else {
-          // Add downvote, remove upvote if exists
           if (userVoteIndex !== -1) {
             upvotes.splice(userVoteIndex, 1)
           }
@@ -177,15 +182,17 @@ export async function vote(
       }
 
       // Update the post
-      await sanityClient.patch(postId).set({
-        upvotes,
-        downvotes
-      }).commit()
+      if (postId) {
+        await sanityWrite.patch(postId).set({
+          upvotes,
+          downvotes
+        }).commit()
+      }
     }
 
     if (commentId) {
       // Handle comment voting (similar logic)
-      const comment = await sanityClient.getDocument(commentId)
+      const comment = await sanityWrite.getDocument(commentId)
       if (!comment) {
         throw new Error('Comment not found')
       }
@@ -220,10 +227,12 @@ export async function vote(
       }
 
       // Update the comment
-      await sanityClient.patch(commentId).set({
-        upvotes,
-        downvotes
-      }).commit()
+      if (commentId) {
+        await sanityWrite.patch(commentId).set({
+          upvotes,
+          downvotes
+        }).commit()
+      }
     }
 
     return { success: true, action: 'created' }
@@ -243,7 +252,7 @@ export async function getVoteStatus(
     if (!user) return 0
 
     if (postId) {
-      const post = await sanityClient.getDocument(postId)
+      const post = await sanityWrite.getDocument(postId)
       if (!post) return 0
 
       const upvotes = post.upvotes || []
@@ -257,7 +266,7 @@ export async function getVoteStatus(
     }
 
     if (commentId) {
-      const comment = await sanityClient.getDocument(commentId)
+      const comment = await sanityWrite.getDocument(commentId)
       if (!comment) return 0
 
       const upvotes = comment.upvotes || []
@@ -283,7 +292,7 @@ export async function getVoteCounts(
 ) {
   try {
     if (postId) {
-      const post = await sanityClient.getDocument(postId)
+      const post = await sanityWrite.getDocument(postId)
       if (!post) return { upvotes: 0, downvotes: 0, total: 0 }
 
       const upvotes = post.upvotes?.length || 0
@@ -292,7 +301,7 @@ export async function getVoteCounts(
     }
 
     if (commentId) {
-      const comment = await sanityClient.getDocument(commentId)
+      const comment = await sanityWrite.getDocument(commentId)
       if (!comment) return { upvotes: 0, downvotes: 0, total: 0 }
 
       const upvotes = comment.upvotes?.length || 0
@@ -308,9 +317,9 @@ export async function getVoteCounts(
 }
 
 export async function reportContent(
+  reason: string,
   postId?: string,
   commentId?: string,
-  reason: string,
   description?: string
 ) {
   try {
@@ -344,7 +353,7 @@ export async function reportContent(
       updatedAt: new Date().toISOString(),
     }
 
-    const result = await sanityClient.create(reportDoc)
+    const result = await sanityWrite.create(reportDoc)
     revalidatePath('/')
     return result
   } catch (error) {
@@ -363,7 +372,9 @@ export async function followUser(userIdToFollow: string) {
     }
 
     // Get current user's following list
-    const currentUser = await sanityClient.getDocument(user._id)
+    const currentUser = await sanityWrite.getDocument(user._id)
+    if (!currentUser) throw new Error('Current user not found')
+    
     const following = currentUser.following || []
     
     // Check if already following
@@ -376,17 +387,19 @@ export async function followUser(userIdToFollow: string) {
     following.push({ _type: 'reference', _ref: userIdToFollow })
     
     // Update current user
-    await sanityClient.patch(user._id).set({
+    await sanityWrite.patch(user._id).set({
       following,
       updatedAt: new Date().toISOString()
     }).commit()
 
     // Update target user's followers list
-    const targetUser = await sanityClient.getDocument(userIdToFollow)
+    const targetUser = await sanityWrite.getDocument(userIdToFollow)
+    if (!targetUser) throw new Error('Target user not found')
+    
     const followers = targetUser.followers || []
     followers.push({ _type: 'reference', _ref: user._id })
     
-    await sanityClient.patch(userIdToFollow).set({
+    await sanityWrite.patch(userIdToFollow).set({
       followers,
       updatedAt: new Date().toISOString()
     }).commit()
@@ -408,24 +421,34 @@ export async function unfollowUser(userIdToUnfollow: string) {
     if (!user) throw new Error('User not found')
 
     // Get current user's following list
-    const currentUser = await sanityClient.getDocument(user._id)
+    const currentUser = await sanityWrite.getDocument(user._id)
+    if (!currentUser) throw new Error('Current user not found')
+    
     const following = currentUser.following || []
     
+    // Check if following
+    const isFollowing = following.find((followedUser: any) => followedUser._ref === userIdToUnfollow)
+    if (!isFollowing) {
+      throw new Error('Not following this user')
+    }
+
     // Remove from following list
     const updatedFollowing = following.filter((followedUser: any) => followedUser._ref !== userIdToUnfollow)
     
     // Update current user
-    await sanityClient.patch(user._id).set({
+    await sanityWrite.patch(user._id).set({
       following: updatedFollowing,
       updatedAt: new Date().toISOString()
     }).commit()
 
     // Update target user's followers list
-    const targetUser = await sanityClient.getDocument(userIdToUnfollow)
+    const targetUser = await sanityWrite.getDocument(userIdToUnfollow)
+    if (!targetUser) throw new Error('Target user not found')
+    
     const followers = targetUser.followers || []
     const updatedFollowers = followers.filter((follower: any) => follower._ref !== user._id)
     
-    await sanityClient.patch(userIdToUnfollow).set({
+    await sanityWrite.patch(userIdToUnfollow).set({
       followers: updatedFollowers,
       updatedAt: new Date().toISOString()
     }).commit()
@@ -447,7 +470,9 @@ export async function getFollowedUsersPosts() {
     if (!user) throw new Error('User not found')
 
     // Get current user's following list
-    const currentUser = await sanityClient.getDocument(user._id)
+    const currentUser = await sanityWrite.getDocument(user._id)
+    if (!currentUser) throw new Error('Current user not found')
+    
     const following = currentUser.following || []
     
     if (following.length === 0) {
@@ -457,7 +482,7 @@ export async function getFollowedUsersPosts() {
     // Get posts from followed users
     const followedUserIds = following.map((followedUser: any) => followedUser._ref)
     
-    const posts = await sanityClient.fetch(`
+    const posts = await sanityWrite.fetch(`
       *[_type == "post" && author._ref in $followedUserIds] | order(createdAt desc) {
         _id,
         title,
@@ -496,7 +521,9 @@ export async function checkFollowStatus(targetUserId: string) {
       return { isFollowing: false, isOwnProfile: true }
     }
 
-    const currentUser = await sanityClient.getDocument(user._id)
+    const currentUser = await sanityWrite.getDocument(user._id)
+    if (!currentUser) throw new Error('Current user not found')
+    
     const following = currentUser.following || []
     
     const isFollowing = following.find((followedUser: any) => followedUser._ref === targetUserId)
@@ -510,7 +537,7 @@ export async function checkFollowStatus(targetUserId: string) {
 
 export async function getUserProfile(username: string) {
   try {
-    const user = await sanityClient.fetch(`
+    const user = await sanityWrite.fetch(`
       *[_type == "user" && username == $username][0] {
         _id,
         username,
@@ -529,5 +556,63 @@ export async function getUserProfile(username: string) {
   } catch (error) {
     console.error('Error getting user profile:', error)
     return null
+  }
+}
+
+export async function deleteCommunity(communityId: string) {
+  try {
+    const user = await getOrCreateUser()
+    if (!user) return { success: false, error: 'User not found' }
+
+    // Get the community to check if user is the creator
+    const community = await sanityWrite.getDocument(communityId)
+    if (!community) {
+      return { success: false, error: 'Community not found' }
+    }
+
+    // Check if user is the creator
+    if (community.creator._ref !== user._id) {
+      return { success: false, error: 'Only the creator can delete this community' }
+    }
+
+    // Delete the community
+    await sanityWrite.delete(communityId)
+    
+    revalidatePath('/')
+    revalidatePath(`/r/${community.name}`)
+    
+    return { success: true, message: 'Community deleted successfully' }
+  } catch (error) {
+    console.error('Error deleting community:', error)
+    return { success: false, error: String(error) }
+  }
+}
+
+export async function deletePost(postId: string) {
+  try {
+    const user = await getOrCreateUser()
+    if (!user) return { success: false, error: 'User not found' }
+
+    // Get the post to check if user is the author
+    const post = await sanityWrite.getDocument(postId)
+    if (!post) {
+      return { success: false, error: 'Post not found' }
+    }
+
+    // Check if user is the author
+    if (post.author._ref !== user._id) {
+      return { success: false, error: 'Only the author can delete this post' }
+    }
+
+    // Delete the post
+    await sanityWrite.delete(postId)
+    
+    revalidatePath('/')
+    revalidatePath(`/r/${post.subreddit?.name || 'unknown'}`)
+    
+    return { success: true, message: 'Post deleted successfully' }
+  } catch (error) {
+    console.error('Error deleting post:', error)
+    return { success: false, error: String(error) }
   }
 }

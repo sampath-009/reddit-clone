@@ -1,20 +1,18 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { TrendingUp, Users, Calendar, Award, X, ArrowUp, MessageCircle, Share2 } from 'lucide-react'
+import { TrendingUp, Users, Calendar, Award, X, ArrowUp, MessageCircle, Share2, Trash2, MoreHorizontal, LinkIcon } from 'lucide-react'
 import { sanityClient } from '@/lib/sanity'
+import { SUBREDDITS_FOR_LIST } from '@/lib/queries'
+import { deleteCommunityAction, leaveCommunityAction, joinCommunityAction } from '@/app/actions/reddit'
+import { useUser } from '@clerk/nextjs'
+import { toast } from 'sonner'
+import { useTransition } from 'react'
+import { useRouter } from 'next/navigation'
 import CreateCommunity from './CreateCommunity'
-
-interface Subreddit {
-  _id: string
-  name: string
-  displayName?: string
-  description: string
-  members: any[]
-  imageUrl?: string
-  createdAt: string
-  memberCount?: number
-}
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { Button } from '@/components/ui/button'
+import TrendingOnRedditWrapper from './TrendingOnRedditWrapper'
 
 interface TrendingTopic {
   id: string
@@ -27,26 +25,52 @@ interface TrendingTopic {
   timeAgo: string
 }
 
+interface Subreddit {
+  _id: string
+  name: string
+  displayName?: string
+  description: string
+  members: any[]
+  imageUrl?: string
+  createdAt: string
+  memberCount?: number
+  creator: {
+    _id: string
+    username: string
+    clerkId?: string
+  }
+  canDelete?: boolean
+  isMember?: boolean
+}
+
 export default function Sidebar() {
   const [communities, setCommunities] = useState<Subreddit[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [showTrendingModal, setShowTrendingModal] = useState(false)
   const [selectedTopic, setSelectedTopic] = useState<TrendingTopic | null>(null)
+  const { isLoaded, isSignedIn, user } = useUser()
+  const router = useRouter()
 
   useEffect(() => {
+    // Only fetch if user is loaded and we have a clerkId
+    if (!isLoaded || !user?.id) return
+
     const fetchCommunities = async () => {
       try {
-        const query = `*[_type == "subreddit"] | order(createdAt desc)[0...5] {
-          _id,
-          name,
-          displayName,
-          description,
-          members,
-          imageUrl,
-          createdAt,
-          "memberCount": count(members)
-        }`
-        const result = await sanityClient.fetch(query)
+        setIsLoading(true)
+        const result = await sanityClient.fetch(SUBREDDITS_FOR_LIST, { clerkId: user.id })
+        console.log('🔍 Fetched communities with canDelete:', result)
+        
+        // Debug: Log each community's info
+        result.forEach((community: Subreddit, index: number) => {
+          console.log(`🔍 Community ${index + 1}:`, {
+            name: community.name,
+            creator: community.creator,
+            canDelete: community.canDelete,
+            userClerkId: user.id
+          })
+        })
+        
         setCommunities(result)
       } catch (error) {
         console.error('Error fetching communities:', error)
@@ -56,7 +80,75 @@ export default function Sidebar() {
     }
 
     fetchCommunities()
-  }, [])
+  }, [isLoaded, user?.id])
+
+  const handleDeleteCommunity = async (communityId: string) => {
+    if (!isSignedIn || !user) return
+
+    try {
+      const result = await deleteCommunityAction({ subredditId: communityId, clerkUserId: user.id })
+      if (result.ok) {
+        toast.success('Community deleted!')
+        setCommunities(prevCommunities => prevCommunities.filter(community => community._id !== communityId))
+        router.refresh()
+      } else {
+        toast.error(result.error || 'Failed to delete community')
+      }
+    } catch (error) {
+      console.error('Error deleting community:', error)
+      toast.error('Failed to delete community')
+    }
+  }
+
+  const handleLeaveCommunity = async (communityId: string) => {
+    if (!isSignedIn || !user) return
+
+    try {
+      const result = await leaveCommunityAction({ subredditId: communityId, clerkUserId: user.id })
+      if (result.ok) {
+        toast.success('Left community!')
+        // Update the community to show as not joined
+        setCommunities(prevCommunities => 
+          prevCommunities.map(community => 
+            community._id === communityId 
+              ? { ...community, isMember: false }
+              : community
+          )
+        )
+        router.refresh()
+      } else {
+        toast.error(result.error || 'Failed to leave community')
+      }
+    } catch (error) {
+      console.error('Error leaving community:', error)
+      toast.error('Failed to leave community')
+    }
+  }
+
+  const handleJoinCommunity = async (communityId: string) => {
+    if (!isSignedIn || !user) return
+
+    try {
+      const result = await joinCommunityAction({ subredditId: communityId, clerkUserId: user.id })
+      if (result.ok) {
+        toast.success('Joined community!')
+        // Update the community to show as joined
+        setCommunities(prevCommunities => 
+          prevCommunities.map(community => 
+            community._id === communityId 
+              ? { ...community, isMember: true }
+              : community
+          )
+        )
+        router.refresh()
+      } else {
+        toast.error(result.error || 'Failed to join community')
+      }
+    } catch (error) {
+      console.error('Error joining community:', error)
+      toast.error('Failed to join community')
+    }
+  }
 
   const trendingTopics: TrendingTopic[] = [
     { 
@@ -117,12 +209,12 @@ export default function Sidebar() {
       <CreateCommunity />
 
       {/* Community Info */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">About Reddit Clone</h2>
-        <p className="text-gray-600 text-sm mb-4">
+      <div className="bg-card rounded-lg border border-border p-6">
+        <h2 className="text-lg font-semibold text-foreground mb-4">About Reddit Clone</h2>
+        <p className="text-muted-foreground text-sm mb-4">
           The front page of the internet. Join communities, share content, and discover what's trending.
         </p>
-        <div className="flex items-center space-x-4 text-sm text-gray-500">
+        <div className="flex items-center space-x-4 text-sm text-muted-foreground">
           <div className="flex items-center space-x-1">
             <Users className="h-4 w-4" />
             <span>{communities.length} communities</span>
@@ -135,13 +227,21 @@ export default function Sidebar() {
       </div>
 
       {/* Communities */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center space-x-2">
+      <div className="bg-card rounded-lg border border-border p-6">
+        <h3 className="text-lg font-semibold text-foreground mb-4 flex items-center space-x-2">
           <TrendingUp className="h-5 w-5 text-orange-500" />
           <span>Communities</span>
         </h3>
         <div className="space-y-3">
-          {isLoading ? (
+          {!isLoaded ? (
+            <div className="text-center py-4">
+              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500 mx-auto"></div>
+            </div>
+          ) : !isSignedIn || !user ? (
+            <div className="text-center py-4">
+              <div className="text-gray-500">Sign in to see communities</div>
+            </div>
+          ) : isLoading ? (
             <div className="text-center py-4">
               <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-orange-500 mx-auto"></div>
             </div>
@@ -149,25 +249,123 @@ export default function Sidebar() {
             <p className="text-gray-500 text-center py-4">No communities yet</p>
           ) : (
             communities.map((community) => (
-              <div key={community._id} className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-lg transition-colors">
+              <div key={community._id} className="flex items-center justify-between p-3 hover:bg-accent rounded-lg transition-colors">
                 <div className="flex-1">
-                  <div className="font-medium text-gray-900">r/{community.displayName || community.name}</div>
-                  <div className="text-sm text-gray-500">{community.description}</div>
-                  <div className="text-xs text-gray-400">{community.memberCount || 0} members</div>
+                  <div className="font-medium text-foreground">r/{community.displayName || community.name}</div>
+                  <div className="text-sm text-muted-foreground">{community.description}</div>
+                  <div className="text-xs text-muted-foreground">{community.memberCount || 0} members</div>
+                  <div className="text-xs text-muted-foreground">Created by u/{community.creator?.username}</div>
                 </div>
-                <button className="px-3 py-1 bg-orange-500 text-white text-sm rounded-full hover:bg-orange-600 transition-colors">
-                  Join
-                </button>
+                {community.canDelete ? (
+                  <div className="flex items-center space-x-2">
+                    {community.isMember ? (
+                      <button 
+                        onClick={() => handleLeaveCommunity(community._id)}
+                        className="px-3 py-1 bg-gray-500 text-white text-sm rounded-full hover:bg-gray-600 transition-colors"
+                      >
+                        Leave
+                      </button>
+                    ) : (
+                      <button 
+                        onClick={() => handleJoinCommunity(community._id)}
+                        className="px-3 py-1 bg-orange-500 text-white text-sm rounded-full hover:bg-orange-600 transition-colors"
+                      >
+                        Join
+                      </button>
+                    )}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="sm" className="p-2 text-gray-600 hover:text-gray-900">
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-40">
+                        {community.canDelete && (
+                          <DropdownMenuItem
+                            className="text-red-600 focus:text-red-600"
+                            onClick={() => handleDeleteCommunity(community._id)}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" /> Delete
+                          </DropdownMenuItem>
+                        )}
+                        <DropdownMenuItem
+                          className="text-blue-600 focus:text-blue-600"
+                          onClick={() => {
+                            // Copy community link to clipboard
+                            navigator.clipboard.writeText(`${window.location.origin}/r/${community.name}`)
+                            toast.success('Community link copied!')
+                          }}
+                        >
+                          <LinkIcon className="mr-2 h-4 w-4" /> Copy Link
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                ) : (
+                  <div className="flex items-center space-x-2">
+                    {community.isMember ? (
+                      <button 
+                        onClick={() => handleLeaveCommunity(community._id)}
+                        className="px-3 py-1 bg-gray-500 text-white text-sm rounded-full hover:bg-gray-600 transition-colors"
+                      >
+                        Leave
+                      </button>
+                    ) : (
+                      <button 
+                        onClick={() => handleJoinCommunity(community._id)}
+                        className="px-3 py-1 bg-orange-500 text-white text-sm rounded-full hover:bg-orange-600 transition-colors"
+                      >
+                        Join
+                      </button>
+                    )}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="sm" className="p-2 text-gray-600 hover:text-gray-900">
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-40">
+                        {community.canDelete && (
+                          <DropdownMenuItem
+                            className="text-red-600 focus:text-red-600"
+                            onClick={() => handleDeleteCommunity(community._id)}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" /> Delete
+                          </DropdownMenuItem>
+                        )}
+                        <DropdownMenuItem
+                          className="text-blue-600 focus:text-blue-600"
+                          onClick={() => {
+                            // Copy community link to clipboard
+                            navigator.clipboard.writeText(`${window.location.origin}/r/${community.name}`)
+                            toast.success('Community link copied!')
+                          }}
+                        >
+                          <LinkIcon className="mr-2 h-4 w-4" /> Copy Link
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                )}
               </div>
             ))
           )}
         </div>
       </div>
 
+      {/* Popular Communities from Reddit */}
+      <div className="bg-card rounded-lg border border-border p-6">
+        <h3 className="text-lg font-semibold text-foreground mb-4 flex items-center space-x-2">
+          <TrendingUp className="h-5 w-5 text-orange-500" />
+          <span>Trending on Reddit</span>
+        </h3>
+        <TrendingOnRedditWrapper />
+      </div>
+
       {/* Trending Topics */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
+      <div className="bg-card rounded-lg border border-border p-6">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-gray-900 flex items-center space-x-2">
+          <h3 className="text-lg font-semibold text-foreground flex items-center space-x-2">
             <Award className="h-5 w-5 text-orange-500" />
             <span>Trending Today</span>
           </h3>
@@ -180,11 +378,11 @@ export default function Sidebar() {
         </div>
         <div className="space-y-3">
           {trendingTopics.map((topic, index) => (
-            <div key={topic.id} className="p-3 hover:bg-gray-50 rounded-lg transition-colors cursor-pointer" onClick={() => handleTopicClick(topic)}>
-              <div className="font-medium text-gray-900 text-sm line-clamp-2 mb-1">
+            <div key={topic.id} className="p-3 hover:bg-accent rounded-lg transition-colors cursor-pointer" onClick={() => handleTopicClick(topic)}>
+              <div className="font-medium text-foreground text-sm line-clamp-2 mb-1">
                 {topic.title}
               </div>
-              <div className="text-xs text-gray-500">
+              <div className="text-xs text-muted-foreground">
                 {topic.community} • {topic.upvotes} upvotes
               </div>
             </div>
@@ -195,13 +393,13 @@ export default function Sidebar() {
       {/* Trending Topics Modal */}
       {showTrendingModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg p-6 max-w-4xl w-full max-h-full overflow-y-auto">
+          <div className="bg-card rounded-lg p-6 max-w-4xl w-full max-h-full overflow-y-auto">
             <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-semibold text-gray-900 flex items-center space-x-2">
+              <h3 className="text-xl font-semibold text-foreground flex items-center space-x-2">
                 <Award className="h-6 w-6 text-orange-500" />
                 <span>Trending Today</span>
               </h3>
-              <button onClick={closeTrendingModal} className="text-gray-500 hover:text-gray-700">
+              <button onClick={closeTrendingModal} className="text-muted-foreground hover:text-foreground">
                 <X className="h-6 w-6" />
               </button>
             </div>
@@ -210,16 +408,16 @@ export default function Sidebar() {
               // Single topic view
               <div>
                 <div className="mb-6">
-                  <h4 className="text-lg font-semibold text-gray-900 mb-3">{selectedTopic.title}</h4>
-                  <div className="text-gray-600 text-sm leading-relaxed">
+                  <h4 className="text-lg font-semibold text-foreground mb-3">{selectedTopic.title}</h4>
+                  <div className="text-muted-foreground text-sm leading-relaxed">
                     <p>{selectedTopic.content}</p>
                   </div>
-                  <div className="mt-4 text-xs text-gray-500">
+                  <div className="mt-4 text-xs text-muted-foreground">
                     By {selectedTopic.author} • {selectedTopic.timeAgo} • {selectedTopic.community}
                   </div>
                 </div>
                 
-                <div className="flex items-center space-x-6 text-gray-500 text-sm border-t pt-4">
+                <div className="flex items-center space-x-6 text-muted-foreground text-sm border-t border-border pt-4">
                   <div className="flex items-center space-x-2 hover:text-orange-500 cursor-pointer">
                     <ArrowUp className="h-5 w-5" />
                     <span>{selectedTopic.upvotes}</span>
@@ -247,27 +445,20 @@ export default function Sidebar() {
                 {trendingTopics.map((topic) => (
                   <div 
                     key={topic.id} 
-                    className="p-4 border border-gray-200 rounded-lg hover:border-orange-300 hover:shadow-md transition-all cursor-pointer"
+                    className="p-4 border border-border rounded-lg hover:border-orange-300 hover:shadow-md transition-all cursor-pointer"
                     onClick={() => setSelectedTopic(topic)}
                   >
-                    <h4 className="font-semibold text-gray-900 text-sm mb-2 line-clamp-2">
+                    <h4 className="font-semibold text-foreground text-sm mb-2 line-clamp-2">
                       {topic.title}
                     </h4>
-                    <p className="text-gray-600 text-xs mb-3 line-clamp-3">
+                    <div className="text-xs text-muted-foreground mb-2">
+                      {topic.community} • {topic.upvotes} upvotes • {topic.comments} comments
+                    </div>
+                    <p className="text-xs text-muted-foreground line-clamp-3">
                       {topic.content}
                     </p>
-                    <div className="flex items-center justify-between text-xs text-gray-500">
-                      <span>{topic.community}</span>
-                      <div className="flex items-center space-x-3">
-                        <span className="flex items-center space-x-1">
-                          <ArrowUp className="h-3 w-3" />
-                          {topic.upvotes}
-                        </span>
-                        <span className="flex items-center space-x-2">
-                          <MessageCircle className="h-3 w-3" />
-                          {topic.comments}
-                        </span>
-                      </div>
+                    <div className="mt-2 text-xs text-muted-foreground">
+                      By {topic.author} • {topic.timeAgo}
                     </div>
                   </div>
                 ))}
@@ -278,22 +469,14 @@ export default function Sidebar() {
       )}
 
       {/* Footer Links */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <div className="text-xs text-gray-500 space-y-2">
-          <div className="flex flex-wrap gap-2">
-            <a href="#" className="hover:text-gray-700">Help</a>
-            <span>•</span>
-            <a href="#" className="hover:text-gray-700">Reddit Coins</a>
-            <span>•</span>
-            <a href="#" className="hover:text-gray-700">Reddit Premium</a>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <a href="#" className="hover:text-gray-700">Communities</a>
-            <span>•</span>
-            <a href="#" className="hover:text-gray-700">About</a>
-            <span>•</span>
-            <a href="#" className="hover:text-gray-700">Careers</a>
-          </div>
+      <div className="bg-card rounded-lg border border-border p-6">
+        <div className="grid grid-cols-2 gap-4 text-sm">
+          <a href="#" className="hover:text-foreground text-muted-foreground">About</a>
+          <a href="#" className="hover:text-foreground text-muted-foreground">Help</a>
+          <a href="#" className="hover:text-foreground text-muted-foreground">Blog</a>
+          <a href="#" className="hover:text-foreground text-muted-foreground">Careers</a>
+          <a href="#" className="hover:text-foreground text-muted-foreground">Communities</a>
+          <a href="#" className="hover:text-foreground text-muted-foreground">Privacy</a>
         </div>
       </div>
     </div>

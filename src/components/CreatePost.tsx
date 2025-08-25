@@ -8,13 +8,17 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { sanityClient } from '@/lib/sanity'
+import { createPost } from '@/lib/actions'
 import { toast } from 'sonner'
 
 interface Subreddit {
   _id: string
   name: string
   displayName: string
+}
+
+interface CreatePostProps {
+  preSelectedCommunity?: string
 }
 
 export default function CreatePost({ preSelectedCommunity }: CreatePostProps) {
@@ -43,13 +47,15 @@ export default function CreatePost({ preSelectedCommunity }: CreatePostProps) {
 
   const fetchSubreddits = async () => {
     try {
+      // This is just a read operation, so it's safe to keep
       const query = `*[_type == "subreddit"] | order(name asc) {
         _id,
         name,
         displayName
       }`
-      const result = await sanityClient.fetch(query)
-      setSubreddits(result || [])
+      const result = await fetch('/api/subreddits')
+      const data = await result.json()
+      setSubreddits(data || [])
     } catch (error) {
       console.error('Error fetching subreddits:', error)
       toast.error('Failed to load communities')
@@ -93,68 +99,32 @@ export default function CreatePost({ preSelectedCommunity }: CreatePostProps) {
     setIsLoading(true)
 
     try {
-      // First, get or create the user in Sanity
-      const existingUser = await sanityClient.fetch(
-        `*[_type == "user" && clerkId == $clerkId][0]`,
-        { clerkId: user.id }
-      )
-
-      let sanityUser
-      if (existingUser) {
-        sanityUser = existingUser
-      } else {
-        // Create new user in Sanity
-        sanityUser = await sanityClient.create({
-          _type: 'user',
-          clerkId: user.id,
-          username: user.username || `user_${user.id.slice(0, 8)}`,
-          email: user.emailAddresses[0]?.emailAddress || '',
-          imageUrl: user.imageUrl,
-          karma: 0,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        })
-      }
-
-      // Create the post
-      const post = await sanityClient.create({
-        _type: 'post',
-        title: title.trim(),
-        content: postType === 'text' ? content.trim() : undefined,
-        imageUrl: postType === 'image' ? imageUrl.trim() : undefined,
-        linkUrl: postType === 'link' ? linkUrl.trim() : undefined,
+      // Use server action instead of direct Sanity calls
+      const result = await createPost(
+        title,
+        content,
+        selectedSubreddit,
         postType,
-        author: {
-          _type: 'reference',
-          _ref: sanityUser._id,
-        },
-        subreddit: {
-          _type: 'reference',
-          _ref: selectedSubreddit,
-        },
-        upvotes: [],
-        downvotes: [],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      })
-
-      toast.success('Post created successfully!')
-      setIsOpen(false)
+        imageUrl,
+        linkUrl
+      )
       
-      // Reset form
-      setTitle('')
-      setContent('')
-      setImageUrl('')
-      setLinkUrl('')
-      setPostType('text')
-      setSelectedSubreddit('')
-      
-      // Refresh the page to show the new post
-      window.location.reload()
-      
+      if (result.success) {
+        toast.success('Post created successfully!')
+        setIsOpen(false)
+        setTitle('')
+        setContent('')
+        setImageUrl('')
+        setLinkUrl('')
+        setSelectedSubreddit('')
+        // Optionally refresh the page or update the UI
+        window.location.reload()
+      } else {
+        toast.error(result.error || 'Failed to create post')
+      }
     } catch (error) {
       console.error('Error creating post:', error)
-      toast.error('Failed to create post. Please try again.')
+      toast.error('An unexpected error occurred.')
     } finally {
       setIsLoading(false)
     }
@@ -212,12 +182,17 @@ export default function CreatePost({ preSelectedCommunity }: CreatePostProps) {
                   <SelectItem key={subreddit._id} value={subreddit._id}>
                     <div className="flex items-center space-x-2">
                       <Hash className="h-4 w-4 text-orange-500" />
-                      <span>r/{subreddit.displayName}</span>
+                      <span>r/{subreddit.displayName || subreddit.name}</span>
                     </div>
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+            {!selectedSubreddit && (
+              <p className="text-xs text-red-500 mt-1">
+                Please select a community to post in
+              </p>
+            )}
           </div>
 
           {/* Post Type Selection */}

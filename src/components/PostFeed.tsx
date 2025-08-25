@@ -1,15 +1,20 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { ArrowUp, ArrowDown, MessageCircle, Share, MoreHorizontal, Clock, Users, Globe } from 'lucide-react'
+import { ArrowUp, ArrowDown, MessageCircle, Share, MoreHorizontal, Clock, Users, Globe, Trash2, Link as LinkIcon } from 'lucide-react'
 import { formatTimeAgo, formatNumber } from '@/lib/utils'
 import { sanityClient } from '@/lib/sanity'
 import { vote, getVoteStatus, getFollowedUsersPosts } from '@/lib/actions'
+import { deletePostAction } from '@/app/actions/reddit'
 import { useUser } from '@clerk/nextjs'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { getMockPosts } from '@/lib/mockData'
 import Comments from './Comments'
+import { toast } from 'sonner'
+import { useTransition } from 'react'
+import { useRouter } from 'next/navigation'
 
 interface Post {
   _id: string
@@ -21,6 +26,7 @@ interface Post {
     _id: string
     username: string
     imageUrl?: string
+    clerkId?: string
   }
   subreddit: {
     _id: string
@@ -132,7 +138,8 @@ export default function PostFeed({ sortBy = 'home', communityFilter, initialFeed
         author->{
           _id,
           username,
-          imageUrl
+          imageUrl,
+          clerkId
         },
         subreddit->{
           _id,
@@ -173,7 +180,7 @@ export default function PostFeed({ sortBy = 'home', communityFilter, initialFeed
     if (!isSignedIn || !user) return
 
     try {
-      const result = await vote(postId, undefined, voteType)
+      const result = await vote(voteType, postId, undefined)
       
       if (result.success) {
         // Update the post's vote count optimistically
@@ -216,6 +223,23 @@ export default function PostFeed({ sortBy = 'home', communityFilter, initialFeed
   const handleShare = (postId: string) => {
     // TODO: Implement share functionality
     console.log(`Sharing post ${postId}`)
+  }
+
+  const handleDelete = async (postId: string) => {
+    if (!isSignedIn || !user) return
+
+    try {
+      const result = await deletePostAction({ postId, clerkUserId: user.id })
+      if (result.ok) {
+        toast.success('Post deleted!')
+        setPosts(prevPosts => prevPosts.filter(post => post._id !== postId))
+      } else {
+        toast.error(result.error || 'Failed to delete post')
+      }
+    } catch (error) {
+      console.error('Error deleting post:', error)
+      toast.error('Failed to delete post')
+    }
   }
 
   const toggleFeedType = () => {
@@ -426,12 +450,29 @@ export default function PostFeed({ sortBy = 'home', communityFilter, initialFeed
                   <Share className="h-4 w-4" />
                   <span className="text-sm">Share</span>
                 </Button>
-              </div>
 
-              {/* More Options */}
-              <Button variant="ghost" size="sm" className="p-2 text-gray-600 hover:text-gray-900">
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
+                {/* More Options */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="sm" className="p-2 text-gray-600 hover:text-gray-900">
+                      <MoreHorizontal className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-40">
+                    <DropdownMenuItem onClick={() => navigator.clipboard.writeText(window.location.href)}>
+                      <LinkIcon className="mr-2 h-4 w-4" /> Copy link
+                    </DropdownMenuItem>
+                    {isSignedIn && user && post.author.clerkId === user.id && (
+                      <DropdownMenuItem
+                        className="text-red-600 focus:text-red-600"
+                        onClick={() => handleDelete(post._id)}
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" /> Delete
+                      </DropdownMenuItem>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
             </div>
           </div>
 
